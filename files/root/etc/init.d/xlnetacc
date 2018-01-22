@@ -14,9 +14,9 @@ start() {
 	config_get_bool down_acc "general" "down_acc" 0
 	config_get_bool up_acc "general" "up_acc" 0
 	config_get network "general" "network"
-	config_get account "general" "account"
-	config_get encrypt "general" "encrypt"
-	( [ $enabled -eq 0 ] || [ $down_acc -eq 0 -a $up_acc -eq 0 ] || [ -z "$account" -o -z "$encrypt" -o -z "$network" ] ) && return
+	config_get username "general" "account"
+	config_get password "general" "password"
+	( [ $enabled -eq 0 ] || [ $down_acc -eq 0 -a $up_acc -eq 0 ] || [ -z "$username" -o -z "$password" -o -z "$network" ] ) && return
 
 	logger -p "daemon.notice" -t "$NAME" "XLNetAcc is starting ..."
 	service_start /usr/bin/${NAME}.sh --start

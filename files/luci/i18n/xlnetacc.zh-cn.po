@@ -90,3 +90,12 @@ msgstr "无日志数据。"
 
 msgid "Error get log data."
 msgstr "获取日志数据失败。"
+
+msgid "Peer ID(peerid)"
+msgstr "对等ID(peerid)"
+
+msgid "Device Sign(devicesign)"
+msgstr "设备标识(devicesign)"
+
+msgid "This data is captured from network packets!"
+msgstr "此数据需要从网络数据包中抓取！"
