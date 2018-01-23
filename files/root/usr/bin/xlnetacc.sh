@@ -6,7 +6,7 @@ readonly protocolVersion=200
 readonly businessType=68
 readonly sdkVersion=177662
 readonly clientVersion='2.4.1.3'
-readonly agent_login="android-async-http/xl-acc-sdk/version-2.1.1.$sdkVersion"
+readonly agent_xl="android-async-http/xl-acc-sdk/version-2.1.1.$sdkVersion"
 readonly agent_down='okhttp/3.4.1'
 readonly agent_up='android-async-http/xl-acc-sdk/version-1.0.0.1'
 readonly client_type_down='android-swjsq'
@@ -14,6 +14,7 @@ readonly client_type_up='android-uplink'
 readonly osversion='7.1.1'
 
 # 声明全局变量
+_bind_ip=
 _http_cmd=
 _peerid=
 _devicesign=
@@ -32,8 +33,9 @@ user_agent=
 link_en=
 link_cn=
 lasterr=
-sequenceno=1000000
-sequence=$(( $(date +%s) / 6 ))
+sequence_xl=1000000
+sequence_down=$(( $(date +%s) / 6 ))
+sequence_up=$sequence_down
 
 # 包含用于解析 JSON 格式返回值的函数
 . /usr/share/libubox/jshn.sh
@@ -97,22 +99,23 @@ clean_log() {
 
 # 获取接口IP地址
 get_acc_ip() {
-	local acc_ipaddr
 	json_cleanup; json_load "$(ubus call network.interface.$network status 2> /dev/null)" >/dev/null 2>&1
 	json_select "ipv4-address" >/dev/null 2>&1; json_select 1 >/dev/null 2>&1
-	json_get_var acc_ipaddr "address"
-	_log "acc_ipaddr is $acc_ipaddr" $(( 1 | 4 ))
-	[ -z "$acc_ipaddr" ] && { _log "获取网络 $network IP地址出错"; return; }
-	[ "$acc_ipaddr"x == "0.0.0.0"x ] && { _log "网络 $network IP地址无效"; return; }
-
-	_log "绑定IP地址: $acc_ipaddr"
-	echo -n "$acc_ipaddr"
+	json_get_var _bind_ip "address"
+	_log "_bind_ip is $_bind_ip" $(( 1 | 4 ))
+	if [ -z "$_bind_ip" -o "$_bind_ip"x == "0.0.0.0"x ]; then
+		_log "获取网络 $network IP地址失败"
+		return 1
+	else
+		_log "绑定IP地址: $_bind_ip"
+		return 0
+	fi
 }
 
 # 定义基本 HTTP 命令和参数
 gen_http_cmd() {
 	_http_cmd="wget-ssl -nv -t 1 -O - --no-check-certificate --compression=gzip"
-	_http_cmd="$_http_cmd --bind-address=$1"
+	_http_cmd="$_http_cmd --bind-address=$_bind_ip"
 	_log "_http_cmd is $_http_cmd" $(( 1 | 4 ))
 }
 
@@ -129,26 +132,26 @@ gen_device_sign() {
 	[ -z "$macaddr" ] && { _log "获取网络 $network MAC地址出错"; return; }
 	macaddr=$(echo -n "$macaddr" | awk '{print toupper($0)}')
 
-	# 计算peerid
+	# 计算peerID
 	readonly _peerid="${macaddr//:/}004V"
 	_log "_peerid is $_peerid" $(( 1 | 4 ))
 
 	# 计算devicesign
 	# sign = div.10?.device_id + md5(sha1(packageName + businessType + md5(a protocolVersion specific GUID)))
 	local fake_device_id=$(echo -n "$macaddr" | md5sum | awk '{print $1}')
-	local device_sign=$(echo -n "${fake_device_id}${packageName}${businessType}c7f21687eed3cdb400ca11fc2263c998" \
+	local fake_device_sign=$(echo -n "${fake_device_id}${packageName}${businessType}c7f21687eed3cdb400ca11fc2263c998" \
 		| openssl sha1 -hmac | awk '{print $2}')
-	readonly _devicesign="div101.${fake_device_id}"$(echo -n "$device_sign" | md5sum | awk '{print $1}')
+	readonly _devicesign="div101.${fake_device_id}"$(echo -n "$fake_device_sign" | md5sum | awk '{print $1}')
 	_log "_devicesign is $_devicesign" $(( 1 | 4 ))
 }
 
 # 快鸟帐号通用参数
 xlnetacc_json() {
-	let sequenceno++
+	let sequence_xl++
 	# 生成POST数据
 	json_init
 	json_add_string protocolVersion "$protocolVersion"
-	json_add_string sequenceNo "$sequenceno"
+	json_add_string sequenceNo "$sequence_xl"
 	json_add_string platformVersion '2'
 	json_add_string isCompressed '0'
 	json_add_string businessType "$businessType"
@@ -171,9 +174,9 @@ xlnetacc_login() {
 	json_add_string verifyCode
 	json_close_object
 
-	local ret=$($_http_cmd --user-agent="$agent_login" 'https://mobile-login.xunlei.com:443/login' --post-data="$(json_dump)")
+	local ret=$($_http_cmd --user-agent="$agent_xl" 'https://mobile-login.xunlei.com:443/login' --post-data="$(json_dump)")
 	_log "ret is $ret" $(( 1 | 4 ))
-	json_cleanup; json_load "$ret" >/dev/null 2>&1; lasterr=
+	json_cleanup; json_load "$ret" >/dev/null 2>&1
 	json_get_var lasterr "errorCode"
 	json_get_var _userid "userID"
 	_log "_userid is $_userid" $(( 1 | 4 ))
@@ -200,9 +203,9 @@ xlnetacc_logout() {
 	json_add_string sessionID "$_sessionid"
 	json_close_object
 
-	local ret=$($_http_cmd --user-agent="$agent_login" 'https://mobile-login.xunlei.com:443/logout' --post-data="$(json_dump)")
+	local ret=$($_http_cmd --user-agent="$agent_xl" 'https://mobile-login.xunlei.com:443/logout' --post-data="$(json_dump)")
 	_log "ret is $ret" $(( 1 | 4 ))
-	json_cleanup; json_load "$ret" >/dev/null 2>&1; lasterr=
+	json_cleanup; json_load "$ret" >/dev/null 2>&1
 	json_get_var lasterr "errorCode"
 
 	if [ ${lasterr:=-1} -ne 0 ]; then
@@ -229,9 +232,9 @@ xlnetacc_getuserinfo() {
 	json_add_string vasid "$_vasid"
 	json_close_object
 
-	local ret=$($_http_cmd --user-agent="$agent_login" 'https://mobile-login.xunlei.com:443/getuserinfo' --post-data="$(json_dump)")
+	local ret=$($_http_cmd --user-agent="$agent_xl" 'https://mobile-login.xunlei.com:443/getuserinfo' --post-data="$(json_dump)")
 	_log "ret is $ret" $(( 1 | 4 ))
-	json_cleanup; json_load "$ret" >/dev/null 2>&1; lasterr=
+	json_cleanup; json_load "$ret" >/dev/null 2>&1
 	local vasid isvip isyear expiredate index
 	json_get_var lasterr "errorCode"
 	json_select "vipList" >/dev/null 2>&1
@@ -270,7 +273,7 @@ xlnetacc_portal() {
 		access_url='http://api.upportal.swjsq.vip.xunlei.com/v2/queryportal'
 	local ret=$($_http_cmd --user-agent="$user_agent" "$access_url")
 	_log "$link_en portal is $ret" $(( 1 | 4 ))
-	json_cleanup; json_load "$ret" >/dev/null 2>&1; lasterr=
+	json_cleanup; json_load "$ret" >/dev/null 2>&1
 	local portal_ip portal_port
 	json_get_var lasterr "errno"
 	json_get_var portal_ip "interface_ip"
@@ -299,15 +302,10 @@ xlnetacc_portal() {
 
 get_portal() {
 	local province sp
-	[ -z "$_portal_down" ] && xlnetacc_portal 1
-	[ -z "$_portal_up" ] && xlnetacc_portal 2
-	if [ -n "$_portal_down" -a -n "$_portal_up" ]; then
-		local outmsg="获取提速入口成功"; \
-			[ -n "$province" -a -n "$sp" ] && outmsg="${outmsg}。运营商：${province}${sp}"; _log "$outmsg" $(( 1 | 8 ))
-		return 0
-	else
-		return 1
-	fi
+	xlnetacc_cmd 'xlnetacc_portal' 1
+	xlnetacc_cmd 'xlnetacc_portal' 2 1
+	local outmsg="获取提速入口成功"; \
+		[ -n "$province" -a -n "$sp" ] && outmsg="${outmsg}。运营商：${province}${sp}"; _log "$outmsg" $(( 1 | 8 ))
 }
 
 get_bandwidth() {
@@ -358,7 +356,7 @@ isp_bandwidth() {
 
 	local ret=$($_http_cmd --user-agent="$user_agent" "$access_url/bandwidth?$http_args")
 	_log "$link_en bandwidth is $ret" $(( 1 | 4 ))
-	json_cleanup; json_load "$ret" >/dev/null 2>&1; lasterr=
+	json_cleanup; json_load "$ret" >/dev/null 2>&1
 	local dial_account
 	json_get_var lasterr "errno"
 	json_get_var dial_account "dial_account"
@@ -385,7 +383,7 @@ isp_upgrade() {
 
 	local ret=$($_http_cmd --user-agent="$user_agent" "$access_url/upgrade?$http_args")
 	_log "$link_en upgrade is $ret" $(( 1 | 4 ))
-	json_cleanup; json_load "$ret" >/dev/null 2>&1; lasterr=
+	json_cleanup; json_load "$ret" >/dev/null 2>&1
 	json_get_var lasterr "errno"
 
 	if [ ${lasterr:=-1} -ne 0 ]; then
@@ -409,7 +407,7 @@ isp_keepalive() {
 
 	local ret=$($_http_cmd --user-agent="$user_agent" "$access_url/keepalive?$http_args")
 	_log "$link_en keepalive is $ret" $(( 1 | 4 ))
-	json_cleanup; json_load "$ret" >/dev/null 2>&1; lasterr=
+	json_cleanup; json_load "$ret" >/dev/null 2>&1
 	json_get_var lasterr "errno"
 
 	if [ ${lasterr:=-1} -ne 0 ]; then
@@ -431,7 +429,7 @@ isp_recover() {
 
 	local ret=$($_http_cmd --user-agent="$user_agent" "$access_url/recover?$http_args")
 	_log "$link_en recover is $ret" $(( 1 | 4 ))
-	json_cleanup; json_load "$ret" >/dev/null 2>&1; lasterr=
+	json_cleanup; json_load "$ret" >/dev/null 2>&1
 	json_get_var lasterr "errno"
 
 	if [ ${lasterr:=-1} -ne 0 ]; then
@@ -453,7 +451,7 @@ isp_query() {
 
 	local ret=$($_http_cmd --user-agent="$user_agent" "$access_url/query_try_info?$http_args")
 	_log "$link_en query_try_info is $ret" $(( 1 | 4 ))
-	json_cleanup; json_load "$ret" >/dev/null 2>&1; lasterr=
+	json_cleanup; json_load "$ret" >/dev/null 2>&1
 	json_get_var lasterr "errno"
 
 	[ $lasterr -eq 0 ] && return 0 || return 1
@@ -461,31 +459,50 @@ isp_query() {
 
 # 设置参数变量
 xlnetacc_var() {
-	let sequence++
-	http_args="sequence=${sequence}&peerid=${_peerid}"
 	if [ $1 -eq 1 ]; then
+		let sequence_down++
 		access_url=$_portal_down
-		http_args="${http_args}&client_type=${client_type_down}-${clientVersion}&client_version=${client_type_down//-/}-${clientVersion}&chanel=umeng-10900011&time_and=$(date +%s)000"
+		http_args="sequence=${sequence_down}&client_type=${client_type_down}-${clientVersion}&client_version=${client_type_down//-/}-${clientVersion}&chanel=umeng-10900011&time_and=$(date +%s)000"
 		user_agent=$agent_down
 		link_en="DownLink"
 		link_cn="下行"
 	else
+		let sequence_up++
 		access_url=$_portal_up
-		http_args="${http_args}&client_type=${client_type_up}-${clientVersion}&client_version=${client_type_up//-/}-${clientVersion}"
+		http_args="sequence=${sequence_up}&client_type=${client_type_up}-${clientVersion}&client_version=${client_type_up//-/}-${clientVersion}"
 		user_agent=$agent_up
 		link_en="UpLink"
 		link_cn="上行"
 	fi
-	http_args="${http_args}&userid=${_userid}&sessionid=${_sessionid}&user_type=1&os=android-${osversion}"
+	http_args="${http_args}&peerid=${_peerid}&userid=${_userid}&sessionid=${_sessionid}&user_type=1&os=android-${osversion}"
 	[ -n "$_dial_account" ] && http_args="${http_args}&dial_account=${_dial_account}"
+}
+
+# 重试循环
+xlnetacc_cmd() {
+	if [ $# -ge 3 ]; then
+		[ $2 -eq 1 -a $down_acc -ne $3 ] && return 0
+		[ $2 -eq 2 -a $up_acc -ne $3 ] && return 0
+	fi
+	local retry=0
+	while : ; do
+		lasterr=
+		eval $1 $2 && break # 成功
+		let retry++
+		[ $# -ge 4 -a $retry -ge $4 ] && break # 重试超时
+		sleep 3s
+	done
+	[ ${lasterr:-0} -eq 0 ] && return 0 || return 1
 }
 
 # 中止信号处理
 sigterm() {
 	_log "trap sigterm, exit" $(( 1 | 4 ))
-	[ $down_acc -eq 2 ] && isp_recover 1
-	[ $up_acc -eq 2 ] && isp_recover 2
-	[ -n "$_sessionid" ] && xlnetacc_logout
+	if [ -n "$_sessionid" ]; then
+		xlnetacc_cmd 'isp_recover' 1 2 1
+		xlnetacc_cmd 'isp_recover' 2 2 1
+		xlnetacc_cmd 'xlnetacc_logout' 0 0 1
+	fi
 	rm -f "$down_state_file" "$up_state_file"
 	exit 0
 }
@@ -545,78 +562,48 @@ xlnetacc_init() {
 xlnetacc_main() {
 	while : ; do
 		# 获取外网IP地址
-		while : ; do
-			local bind_ip=$(get_acc_ip)
-			if [ -z "$bind_ip" ]; then
-				sleep 5s # 获取失败
-			else
-				gen_http_cmd "$bind_ip"; break
-			fi
-		done
+		xlnetacc_cmd 'get_acc_ip'
+		gen_http_cmd
 
 		# 注销已登录帐号
 		if [ -n "$_sessionid" ]; then
-			[ $down_acc -eq 2 ] && isp_recover 1
-			[ $up_acc -eq 2 ] && isp_recover 2
-			xlnetacc_logout && sleep 3s
-			_portal_down=; _portal_up=; _cur_down=; _max_down=; _cur_up=; _max_up=; _dial_account=
+			xlnetacc_cmd 'isp_recover' 1 2 3
+			xlnetacc_cmd 'isp_recover' 2 2 3
+			xlnetacc_cmd 'xlnetacc_logout' 0 0 3 && sleep 3s
 		fi
 
 		# 登录快鸟帐号
 		while : ; do
-			xlnetacc_login && break
+			lasterr=
+			xlnetacc_login
 			case $lasterr in
+				0) break;; # 登录成功
+				-1) sleep 3s;; # 未返回任何数据，等待3秒后重试
+				-2) sleep 3m;; # 未返回有效数据，等待3分钟后重试
 				6) sleep 130m;; # 需要输入验证码，等待130分钟后重试
-				-1|-2) sleep 3m;; # 未返回有效数据，等待3分钟后重试
 				*) return 5;; # 登录失败
 			esac
 		done
 
 		# 获取用户信息
-		while [ $down_acc -eq 1 ]; do xlnetacc_getuserinfo 1 && break || sleep 3s; done
-		while [ $up_acc -eq 1 ]; do xlnetacc_getuserinfo 2 && break || sleep 3s; done
+		xlnetacc_cmd 'xlnetacc_getuserinfo' 1 1
+		xlnetacc_cmd 'xlnetacc_getuserinfo' 2 1
 		[ $down_acc -eq 0 -a $up_acc -eq 0 ] && break
 
 		# 获取提速入口
-		while : ; do get_portal && break || sleep 3s; done
+		get_portal
 		# 获取网络带宽信息
-		while : ; do isp_bandwidth && break || sleep 3s; done
+		xlnetacc_cmd 'isp_bandwidth'
 		[ $down_acc -eq 0 -a $up_acc -eq 0 ] && break
 
 		# 提速与保持
 		while : ; do
-			while [ $down_acc -eq 1 ]; do
-				isp_upgrade 1 && break
-				case $lasterr in
-					-1) break 2;; # 未返回有效数据，重新登录快鸟帐号
-					*) sleep 3s;;
-				esac
-			done
-			while [ $up_acc -eq 1 ]; do
-				isp_upgrade 2 && break
-				case $lasterr in
-					-1) break 2;;
-					*) sleep 3s;;
-				esac
-			done
-
+			xlnetacc_cmd 'isp_upgrade' 1 1 3 || break
+			xlnetacc_cmd 'isp_upgrade' 2 1 3 || break
 			clean_log # 清理日志
 			sleep 10m
-
-			while [ $down_acc -eq 2 ]; do
-				isp_keepalive 1 && break
-				case $lasterr in
-					-1) break 2;;
-					*) sleep 3s;;
-				esac
-			done
-			while [ $up_acc -eq 2 ]; do
-				isp_keepalive 2 && break
-				case $lasterr in
-					-1) break 2;;
-					*) sleep 3s;;
-				esac
-			done
+			xlnetacc_cmd 'isp_keepalive' 1 2 3 || break
+			xlnetacc_cmd 'isp_keepalive' 2 2 3 || break
 		done
 	done
 	_log "数据异常，迅雷快鸟已停止。"
