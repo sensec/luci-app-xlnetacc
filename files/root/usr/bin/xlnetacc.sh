@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # 声明常量
-readonly appName='com.xunlei.vip.swjsq'
+readonly packageName='com.xunlei.vip.swjsq'
 readonly protocolVersion=200
 readonly businessType=68
 readonly sdkVersion=177662
@@ -116,7 +116,7 @@ gen_http_cmd() {
 	_log "_http_cmd is $_http_cmd" $(( 1 | 4 ))
 }
 
-# 生成设备签名
+# 生成设备标识
 gen_device_sign() {
 	local ifname macaddr
 	while : ; do
@@ -129,15 +129,16 @@ gen_device_sign() {
 	[ -z "$macaddr" ] && { _log "获取网络 $network MAC地址出错"; return; }
 	macaddr=$(echo -n "$macaddr" | awk '{print toupper($0)}')
 
-	# 根据MAC地址生成peerid
+	# 计算peerid
 	readonly _peerid="${macaddr//:/}004V"
 	_log "_peerid is $_peerid" $(( 1 | 4 ))
 
-	# 根据MAC地址生成devicesign
-	local fake_device_id_md5=$(echo -n "$macaddr" | md5sum | awk '{print $1}')
-	local fake_device_id_sha1=$(echo -n "${fake_device_id_md5}${appName}${businessType}700d1872b772946a6940e4b51827e8af" \
+	# 计算devicesign
+	# sign = div.10?.device_id + md5(sha1(packageName + businessType + md5(a protocolVersion specific GUID)))
+	local fake_device_id=$(echo -n "$macaddr" | md5sum | awk '{print $1}')
+	local device_sign=$(echo -n "${fake_device_id}${packageName}${businessType}c7f21687eed3cdb400ca11fc2263c998" \
 		| openssl sha1 -hmac | awk '{print $2}')
-	readonly _devicesign="div100.$fake_device_id_md5"$(echo -n "$fake_device_id_sha1" | md5sum | awk '{print $1}')
+	readonly _devicesign="div101.${fake_device_id}"$(echo -n "$device_sign" | md5sum | awk '{print $1}')
 	_log "_devicesign is $_devicesign" $(( 1 | 4 ))
 }
 
@@ -153,7 +154,7 @@ xlnetacc_json() {
 	json_add_string businessType "$businessType"
 	json_add_string clientVersion "$clientVersion"
 	json_add_string peerID "$_peerid"
-	json_add_string appName "ANDROID-$appName"
+	json_add_string appName "ANDROID-$packageName"
 	json_add_string sdkVersion "$sdkVersion"
 	json_add_string devicesign "$_devicesign"
 	json_add_string deviceModel 'MI'
@@ -531,10 +532,8 @@ xlnetacc_init() {
 	trap "sigterm" INT
 	trap "sigterm" TERM
 
-	# 生成设备签名
-#	gen_device_sign
-	readonly _peerid=$(uci_get_by_name "general" "peerid")
-	readonly _devicesign=$(uci_get_by_name "general" "devicesign")
+	# 生成设备标识
+	gen_device_sign
 	[ -z "$_peerid" -o -z "$_devicesign" ] && return 4
 
 	clean_log

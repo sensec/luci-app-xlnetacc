@@ -33,8 +33,4 @@ o = s:option(Value, "account", translate("XLNetAcc account"))
 o = s:option(Value, "password", translate("XLNetAcc password"))
 o.password = true
 
-o = s:option(Value, "peerid", translate("Peer ID(peerid)"), translate("This data is captured from network packets!"))
-
-o = s:option(Value, "devicesign", translate("Device Sign(devicesign)"), translate("This data is captured from network packets!"))
-
 return m
