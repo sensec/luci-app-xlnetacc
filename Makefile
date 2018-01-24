@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-xlnetacc
 PKG_VERSION:=1.0.3
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 
 PKG_LICENSE:=GPLv2
 PKG_MAINTAINER:=Sense <sensec@gmail.com>
@@ -58,6 +58,8 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_CONF) ./files/root/etc/config/xlnetacc $(1)/etc/config/xlnetacc
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/root/etc/init.d/xlnetacc $(1)/etc/init.d/xlnetacc
+	$(INSTALL_DIR) $(1)/etc/hotplug.d/iface
+	$(INSTALL_BIN) ./files/root/etc/hotplug.d/iface/95-xlnetacc $(1)/etc/hotplug.d/iface/95-xlnetacc
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) ./files/root/etc/uci-defaults/luci-xlnetacc $(1)/etc/uci-defaults/luci-xlnetacc
 	$(INSTALL_DIR) $(1)/usr/bin

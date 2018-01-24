@@ -11,7 +11,6 @@ readonly agent_down='okhttp/3.4.1'
 readonly agent_up='android-async-http/xl-acc-sdk/version-1.0.0.1'
 readonly client_type_down='android-swjsq'
 readonly client_type_up='android-uplink'
-readonly osversion='7.1.1'
 
 # 声明全局变量
 _bind_ip=
@@ -27,6 +26,7 @@ _max_down=
 _cur_up=
 _max_up=
 _dial_account=
+_needbind=
 access_url=
 http_args=
 user_agent=
@@ -98,7 +98,7 @@ clean_log() {
 }
 
 # 获取接口IP地址
-get_acc_ip() {
+get_bind_ip() {
 	json_cleanup; json_load "$(ubus call network.interface.$network status 2> /dev/null)" >/dev/null 2>&1
 	json_select "ipv4-address" >/dev/null 2>&1; json_select 1 >/dev/null 2>&1
 	json_get_var _bind_ip "address"
@@ -146,7 +146,7 @@ gen_device_sign() {
 }
 
 # 快鸟帐号通用参数
-xlnetacc_json() {
+swjsq_json() {
 	let sequence_xl++
 	# 生成POST数据
 	json_init
@@ -162,12 +162,12 @@ xlnetacc_json() {
 	json_add_string devicesign "$_devicesign"
 	json_add_string deviceModel 'MI'
 	json_add_string deviceName 'Xiaomi Mi'
-	json_add_string OSVersion "$osversion"
+	json_add_string OSVersion "7.1.1"
 }
 
 # 帐号登录
-xlnetacc_login() {
-	xlnetacc_json
+swjsq_login() {
+	swjsq_json
 	json_add_string userName "$username"
 	json_add_string passWord "$password"
 	json_add_string verifyKey
@@ -197,8 +197,8 @@ xlnetacc_login() {
 }
 
 # 帐号注销
-xlnetacc_logout() {
-	xlnetacc_json
+swjsq_logout() {
+	swjsq_json
 	json_add_string userID "$_userid"
 	json_add_string sessionID "$_sessionid"
 	json_close_object
@@ -215,18 +215,16 @@ xlnetacc_logout() {
 			[ -n "$errorDesc" ] && outmsg="${outmsg}，原因: $errorDesc"; _log "$outmsg" $(( 1 | 8 | 32 ))
 	else
 		local outmsg="帐号注销成功"; _log "$outmsg" $(( 1 | 8 ))
+		_userid=; _sessionid=
 	fi
-	_userid=; _sessionid=
 
 	[ $lasterr -eq 0 ] && return 0 || return 1
 }
 
 # 获取用户信息
-xlnetacc_getuserinfo() {
-	xlnetacc_var $1
-
+swjsq_getuserinfo() {
 	[ $1 -eq 1 ] && local _vasid=14 || local _vasid=33
-	xlnetacc_json
+	swjsq_json
 	json_add_string userID "$_userid"
 	json_add_string sessionID "$_sessionid"
 	json_add_string vasid "$_vasid"
@@ -249,6 +247,7 @@ xlnetacc_getuserinfo() {
 		let index++
 	done
 
+	[ $1 -eq 1 ] && link_cn="下行" || link_cn="上行"
 	if [ ${lasterr:=-1} -ne 0 ]; then
 		local errorDesc
 		json_get_var errorDesc "errorDesc"
@@ -266,7 +265,7 @@ xlnetacc_getuserinfo() {
 }
 
 # 获取提速入口
-xlnetacc_portal() {
+swjsq_portal() {
 	xlnetacc_var $1
 
 	[ $1 -eq 1 ] && access_url='http://api.portal.swjsq.vip.xunlei.com:81/v2/queryportal' || \
@@ -302,15 +301,13 @@ xlnetacc_portal() {
 
 get_portal() {
 	local province sp
-	xlnetacc_cmd 'xlnetacc_portal' 1
-	xlnetacc_cmd 'xlnetacc_portal' 2 1
+	xlnetacc_retry 'swjsq_portal' 1
+	xlnetacc_retry 'swjsq_portal' 2 1
 	local outmsg="获取提速入口成功"; \
 		[ -n "$province" -a -n "$sp" ] && outmsg="${outmsg}。运营商：${province}${sp}"; _log "$outmsg" $(( 1 | 8 ))
 }
 
 get_bandwidth() {
-	xlnetacc_var $1
-
 	local can_upgrade stream speedup cur_bandwidth max_bandwidth
 	[ $1 -eq 1 ] && { can_upgrade="can_upgrade"; stream="downstream"; } || { can_upgrade="can_upspeedup"; stream="upstream"; }
 	json_cleanup; json_load "$2" >/dev/null 2>&1
@@ -324,6 +321,7 @@ get_bandwidth() {
 	cur_bandwidth=$(expr ${cur_bandwidth:-0} / 1024)
 	max_bandwidth=$(expr ${max_bandwidth:-0} / 1024)
 
+	[ $1 -eq 1 ] && link_cn="下行" || link_cn="上行"
 	if [ $speedup -eq 0 ]; then
 		local richmessage
 		json_select; json_get_var richmessage "richmessage"
@@ -355,10 +353,11 @@ isp_bandwidth() {
 	xlnetacc_var 1
 
 	local ret=$($_http_cmd --user-agent="$user_agent" "$access_url/bandwidth?$http_args")
-	_log "$link_en bandwidth is $ret" $(( 1 | 4 ))
+	_log "bandwidth is $ret" $(( 1 | 4 ))
 	json_cleanup; json_load "$ret" >/dev/null 2>&1
-	local dial_account
+	local bind_dial_account dial_account
 	json_get_var lasterr "errno"
+	json_get_var bind_dial_account "bind_dial_account"
 	json_get_var dial_account "dial_account"
 
 	if [ ${lasterr:=-1} -ne 0 ]; then
@@ -366,10 +365,14 @@ isp_bandwidth() {
 		json_get_var richmessage "richmessage"
 		local outmsg="获取网络带宽信息失败。错误代码: ${lasterr}"; \
 			[ -n "$richmessage" ] && outmsg="${outmsg}，原因: $richmessage"; _log "$outmsg" $(( 1 | 8 | 32 ))
+	elif [ -n "$bind_dial_account" -a "$bind_dial_account" != "$dial_account" ]; then
+		local outmsg="绑定宽带账号 $bind_dial_account 与当前宽带账号 $dial_account 不一致，请联系迅雷客服解绑（每月仅一次）。"; \
+			_log "$outmsg" $(( 1 | 8 | 32 ))
+		down_acc=0; up_acc=0
 	else
 		[ $down_acc -eq 1 ] && get_bandwidth 1 "$ret"
 		[ $up_acc -eq 1 ] && get_bandwidth 2 "$ret"
-
+		[ -z "$bind_dial_account" ] && _needbind=1
 		_dial_account=$dial_account
 		_log "_dial_account is $_dial_account" $(( 1 | 4 ))
 	fi
@@ -439,8 +442,8 @@ isp_recover() {
 			[ -n "$richmessage" ] && outmsg="${outmsg}，原因: $richmessage"; _log "$outmsg" $(( 1 | $1 * 8 | 32 ))
 	else
 		_log "${link_cn}带宽已恢复"
+		[ $1 -eq 1 ] && down_acc=1 || up_acc=1
 	fi
-	[ $1 -eq 1 ] && down_acc=1 || up_acc=1
 
 	[ $lasterr -eq 0 ] && return 0 || return 1
 }
@@ -474,12 +477,16 @@ xlnetacc_var() {
 		link_en="UpLink"
 		link_cn="上行"
 	fi
-	http_args="${http_args}&peerid=${_peerid}&userid=${_userid}&sessionid=${_sessionid}&user_type=1&os=android-${osversion}"
-	[ -n "$_dial_account" ] && http_args="${http_args}&dial_account=${_dial_account}"
+	http_args="${http_args}&peerid=${_peerid}&userid=${_userid}&sessionid=${_sessionid}&user_type=1&os=android-7.1.1"
+	if [ -n "$_dial_account" ]; then
+		http_args="${http_args}&dial_account=${_dial_account}"
+		[ ${_needbind:-0} -ne 0 ] && { http_args="${http_args}&needbind=1"; _needbind=0; }
+	fi
+	_log "http_args is $http_args" $(( 1 | 4 ))
 }
 
 # 重试循环
-xlnetacc_cmd() {
+xlnetacc_retry() {
 	if [ $# -ge 3 ]; then
 		[ $2 -eq 1 -a $down_acc -ne $3 ] && return 0
 		[ $2 -eq 2 -a $up_acc -ne $3 ] && return 0
@@ -495,14 +502,24 @@ xlnetacc_cmd() {
 	[ ${lasterr:-0} -eq 0 ] && return 0 || return 1
 }
 
+# 注销已登录帐号
+xlnetacc_logout() {
+	[ -z "$_sessionid" ] && return 2
+	[ $# -ge 1 ] && local retry=$1 || local retry=1
+
+	xlnetacc_retry 'isp_recover' 1 2 $retry
+	xlnetacc_retry 'isp_recover' 2 2 $retry
+	xlnetacc_retry 'swjsq_logout' 0 0 $retry
+	[ $down_acc -ne 0 ] && down_acc=1; [ $up_acc -ne 0 ] && up_acc=1
+	_userid=; _sessionid=; _dial_account=
+
+	[ $lasterr -eq 0 ] && return 0 || return 1
+}
+
 # 中止信号处理
 sigterm() {
 	_log "trap sigterm, exit" $(( 1 | 4 ))
-	if [ -n "$_sessionid" ]; then
-		xlnetacc_cmd 'isp_recover' 1 2 1
-		xlnetacc_cmd 'isp_recover' 2 2 1
-		xlnetacc_cmd 'xlnetacc_logout' 0 0 1
-	fi
+	xlnetacc_logout
 	rm -f "$down_state_file" "$up_state_file"
 	exit 0
 }
@@ -533,12 +550,8 @@ xlnetacc_init() {
 	( [ $enabled -eq 0 ] || [ $down_acc -eq 0 -a $up_acc -eq 0 ] || [ -z "$username" -o -z "$password" -o -z "$network" ] ) && return 2
 
 	[ $logging -eq 1 ] && [ ! -d /var/log ] && mkdir -p /var/log
-	_log "------------------------------"
+	[ -f "$LOGFILE" ] && _log "------------------------------"
 	_log "迅雷快鸟正在启动..."
-	_log "down_acc is $down_acc" $(( 1 | 4 ))
-	_log "up_acc is $up_acc" $(( 1 | 4 ))
-	_log "network is $network" $(( 1 | 4 ))
-	_log "username is $username" $(( 1 | 4 ))
 
 	# 检查外部调用工具
 	command -v wget-ssl >/dev/null || { _log "GNU Wget 工具不存在"; return 3; }
@@ -546,8 +559,9 @@ xlnetacc_init() {
 	command -v openssl >/dev/null || { _log "openssl 工具不存在"; return 3; }
 
 	# 捕获中止信号
-	trap "sigterm" INT
-	trap "sigterm" TERM
+	trap 'sigterm' INT # Ctrl-C
+	trap 'sigterm' QUIT # Ctrl-\
+	trap 'sigterm' TERM # kill
 
 	# 生成设备标识
 	gen_device_sign
@@ -562,20 +576,16 @@ xlnetacc_init() {
 xlnetacc_main() {
 	while : ; do
 		# 获取外网IP地址
-		xlnetacc_cmd 'get_acc_ip'
+		xlnetacc_retry 'get_bind_ip'
 		gen_http_cmd
 
-		# 注销已登录帐号
-		if [ -n "$_sessionid" ]; then
-			xlnetacc_cmd 'isp_recover' 1 2 3
-			xlnetacc_cmd 'isp_recover' 2 2 3
-			xlnetacc_cmd 'xlnetacc_logout' 0 0 3 && sleep 3s
-		fi
+		# 注销快鸟帐号
+		xlnetacc_logout 3 && sleep 3s
 
 		# 登录快鸟帐号
 		while : ; do
 			lasterr=
-			xlnetacc_login
+			swjsq_login
 			case $lasterr in
 				0) break;; # 登录成功
 				-1) sleep 3s;; # 未返回任何数据，等待3秒后重试
@@ -586,30 +596,31 @@ xlnetacc_main() {
 		done
 
 		# 获取用户信息
-		xlnetacc_cmd 'xlnetacc_getuserinfo' 1 1
-		xlnetacc_cmd 'xlnetacc_getuserinfo' 2 1
+		xlnetacc_retry 'swjsq_getuserinfo' 1 1
+		xlnetacc_retry 'swjsq_getuserinfo' 2 1
 		[ $down_acc -eq 0 -a $up_acc -eq 0 ] && break
-
 		# 获取提速入口
 		get_portal
-		# 获取网络带宽信息
-		xlnetacc_cmd 'isp_bandwidth'
+		# 获取带宽信息
+		xlnetacc_retry 'isp_bandwidth'
 		[ $down_acc -eq 0 -a $up_acc -eq 0 ] && break
+		# 带宽提速
+		xlnetacc_retry 'isp_upgrade' 1 1
+		xlnetacc_retry 'isp_upgrade' 2 1
 
-		# 提速与保持
+		# 心跳保持
 		while : ; do
-			xlnetacc_cmd 'isp_upgrade' 1 1 3 || break
-			xlnetacc_cmd 'isp_upgrade' 2 1 3 || break
 			clean_log # 清理日志
 			sleep 10m
-			xlnetacc_cmd 'isp_keepalive' 1 2 3 || break
-			xlnetacc_cmd 'isp_keepalive' 2 2 3 || break
+			xlnetacc_retry 'isp_keepalive' 1 2 3 || break
+			xlnetacc_retry 'isp_keepalive' 2 2 3 || break
 		done
 	done
-	_log "数据异常，迅雷快鸟已停止。"
+	xlnetacc_logout
+	_log "无法提速，迅雷快鸟已停止。"
+	return 6
 }
 
 # 程序入口
-xlnetacc_init $*
-[ $? -eq 0 ] && xlnetacc_main
+xlnetacc_init "$@" && xlnetacc_main
 exit $?
