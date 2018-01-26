@@ -269,9 +269,9 @@ swjsq_getuserinfo() {
 	[ $1 -eq 1 ] && local outmsg="下行提速会员" || local outmsg="上行提速会员"
 	case ${lasterr:=-1} in
 		0)
-			local index vasid isVip isYear expireDate
+			local index vasid isVip isYear expireDate can_upgrade
 			json_select "vipList" >/dev/null 2>&1
-			until [ ${vasid:-0} -eq $_vasid ]; do
+			while : ; do
 				json_select ${index:=1} >/dev/null 2>&1
 				[ $? -ne 0 ] && break
 				json_get_var vasid "vasid"
@@ -280,14 +280,16 @@ swjsq_getuserinfo() {
 				json_get_var expireDate "expireDate"
 				json_select ".." >/dev/null 2>&1
 				let index++
+				([ $1 -eq 1 -a ${vasid:-0} -eq 2 ] || [ ${vasid:-0} -eq $_vasid ]) && \
+					[ ${isVip:-0} -eq 1 -o ${isYear:-0} -eq 1 ] && \
+					[ ! "${expireDate:-00000000}" \< "$(date +'%Y%m%d')" ] && { can_upgrade=1; break; }
 			done
-			if [ ${vasid:-0} -ne $_vasid ] || [ ${isVip:-0} -eq 0 -a ${isYear:-0} -eq 0 ] || [ "${expireDate:-00000000}" \< "$(date +'%Y%m%d')" ]; then
-				outmsg="${outmsg}无效或已到期"; [ -n "$expireDate" ] && outmsg="${outmsg}。会员到期时间：$expireDate"; \
-					_log "$outmsg" $(( 1 | $1 * 8 | 32 ))
-				[ $1 -eq 1 ] && down_acc=0 || up_acc=0
-			else
+			if [ ${can_upgrade:-0} -eq 1 ]; then
 				outmsg="获取${outmsg}信息成功。会员到期时间：${expireDate:0:4}-${expireDate:4:2}-${expireDate:6:2}"; \
 					_log "$outmsg" $(( 1 | $1 * 8 ))
+			else
+				outmsg="${outmsg}无效或已到期"; _log "$outmsg" $(( 1 | $1 * 8 | 32 ))
+				[ $1 -eq 1 ] && down_acc=0 || up_acc=0
 			fi
 			;;
 		-1)
