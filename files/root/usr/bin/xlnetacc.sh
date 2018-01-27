@@ -262,7 +262,7 @@ swjsq_getuserinfo() {
 	json_close_object
 
 	local ret=$($_http_cmd --user-agent="$agent_xl" 'https://mobile-login.xunlei.com/getuserinfo' --post-data="$(json_dump)")
-	_log "getuserinfo is $ret" $(( 1 | 4 ))
+	_log "getuserinfo $1 is $ret" $(( 1 | 4 ))
 	json_cleanup; json_load "$ret" >/dev/null 2>&1
 	json_get_var lasterr "errorCode"
 
@@ -310,7 +310,7 @@ swjsq_portal() {
 	[ $1 -eq 1 ] && access_url='http://api.portal.swjsq.vip.xunlei.com:81/v2/queryportal' || \
 		access_url='http://api.upportal.swjsq.vip.xunlei.com/v2/queryportal'
 	local ret=$($_http_cmd --user-agent="$user_agent" "$access_url")
-	_log "portal is $ret" $(( 1 | 4 ))
+	_log "portal $1 is $ret" $(( 1 | 4 ))
 	json_cleanup; json_load "$ret" >/dev/null 2>&1
 	json_get_var lasterr "errno"
 
@@ -431,7 +431,7 @@ isp_upgrade() {
 	xlnetacc_var $1
 
 	local ret=$($_http_cmd --user-agent="$user_agent" "$access_url/upgrade?$http_args")
-	_log "upgrade is $ret" $(( 1 | 4 ))
+	_log "upgrade $1 is $ret" $(( 1 | 4 ))
 	json_cleanup; json_load "$ret" >/dev/null 2>&1
 	json_get_var lasterr "errno"
 
@@ -462,7 +462,7 @@ isp_keepalive() {
 	xlnetacc_var $1
 
 	local ret=$($_http_cmd --user-agent="$user_agent" "$access_url/keepalive?$http_args")
-	_log "keepalive is $ret" $(( 1 | 4 ))
+	_log "keepalive $1 is $ret" $(( 1 | 4 ))
 	json_cleanup; json_load "$ret" >/dev/null 2>&1
 	json_get_var lasterr "errno"
 
@@ -485,7 +485,7 @@ isp_recover() {
 	xlnetacc_var $1
 
 	local ret=$($_http_cmd --user-agent="$user_agent" "$access_url/recover?$http_args")
-	_log "recover is $ret" $(( 1 | 4 ))
+	_log "recover $1 is $ret" $(( 1 | 4 ))
 	json_cleanup; json_load "$ret" >/dev/null 2>&1
 	json_get_var lasterr "errno"
 
@@ -509,7 +509,7 @@ isp_query() {
 	xlnetacc_var $1
 
 	local ret=$($_http_cmd --user-agent="$user_agent" "$access_url/query_try_info?$http_args")
-	_log "query_try_info is $ret" $(( 1 | 4 ))
+	_log "query_try_info $1 is $ret" $(( 1 | 4 ))
 	json_cleanup; json_load "$ret" >/dev/null 2>&1
 	json_get_var lasterr "errno"
 
@@ -642,7 +642,7 @@ xlnetacc_main() {
 		xlnetacc_logout 3 && sleep 3s
 
 		# 更新协议版本
-		xlnetacc_retry 'swjsq_update' 0 0 10
+#		xlnetacc_retry 'swjsq_update' 0 0 10
 
 		# 登录快鸟帐号
 		while : ; do
