@@ -89,9 +89,9 @@ _log() {
 # 清理日志
 clean_log() {
 	[ $logging -eq 1 -a -f "$LOGFILE" ] || return
-	[ $(wc -l "$LOGFILE" | awk '{print $1}') -le 500 ] && return
+	[ $(wc -l "$LOGFILE" | awk '{print $1}') -le 800 ] && return
 	_log "清理日志文件"
-	local logdata=$(tail -n 300 "$LOGFILE")
+	local logdata=$(tail -n 500 "$LOGFILE")
 	echo "$logdata" > $LOGFILE 2> /dev/null
 	unset logdata
 }
@@ -540,7 +540,7 @@ xlnetacc_var() {
 
 # 重试循环
 xlnetacc_retry() {
-	if [ $# -ge 3 ]; then
+	if [ $# -ge 3 -a "$3" != "*" ]; then
 		[ $2 -eq 1 -a $down_acc -ne $3 ] && return 0
 		[ $2 -eq 2 -a $up_acc -ne $3 ] && return 0
 	fi
@@ -549,8 +549,7 @@ xlnetacc_retry() {
 	while : ; do
 		lasterr=
 		eval $1 $2 && break # 成功
-		let retry++
-		[ $# -ge 4 -a $retry -ge $4 ] && break # 重试超时
+		let retry++; [ $# -ge 4 -a $retry -ge $4 ] && break # 重试超时
 		case $lasterr in
 			-1) sleep 5s;; # 服务器未响应
 			-2) break;; # 严重错误
@@ -568,7 +567,7 @@ xlnetacc_logout() {
 
 	xlnetacc_retry 'isp_recover' 1 2 $retry
 	xlnetacc_retry 'isp_recover' 2 2 $retry
-	xlnetacc_retry 'swjsq_logout' 0 0 $retry
+	xlnetacc_retry 'swjsq_logout' * * $retry
 	[ $down_acc -ne 0 ] && down_acc=1; [ $up_acc -ne 0 ] && up_acc=1
 	_sessionid=; _dial_account=
 
@@ -588,9 +587,15 @@ xlnetacc_init() {
 	[ "$1" != "--start" ] && return 1
 
 	# 防止重复启动
-	local pid
-	for pid in $(pidof "${0##*/}"); do
-		[ $pid -ne $$ ] && return 1
+	local retry=0
+	while : ; do
+		local isrun=0; local pid
+		for pid in $(pidof "${0##*/}"); do
+			[ $pid -ne $$ ] && isrun=1 && break
+		done
+		[ $isrun -eq 0 ] && break
+		let retry++; [ $retry -gt 5 ] && return 1
+		sleep 2s
 	done
 
 	# 读取设置
@@ -606,7 +611,7 @@ xlnetacc_init() {
 	readonly username=$(uci_get_by_name "general" "account")
 	readonly password=$(uci_get_by_name "general" "password")
 	local enabled=$(uci_get_by_bool "general" "enabled" 0)
-	( [ $enabled -eq 0 ] || [ $down_acc -eq 0 -a $up_acc -eq 0 ] || [ -z "$username" -o -z "$password" -o -z "$network" ] ) && return 2
+	([ $enabled -eq 0 ] || [ $down_acc -eq 0 -a $up_acc -eq 0 ] || [ -z "$username" -o -z "$password" -o -z "$network" ]) && return 2
 
 	[ $logging -eq 1 ] && [ ! -d /var/log ] && mkdir -p /var/log
 	[ -f "$LOGFILE" ] && _log "------------------------------"
@@ -642,7 +647,7 @@ xlnetacc_main() {
 		xlnetacc_logout 3 && sleep 3s
 
 		# 更新协议版本
-#		xlnetacc_retry 'swjsq_update' 0 0 10
+#		xlnetacc_retry 'swjsq_update' * * 10
 
 		# 登录快鸟帐号
 		while : ; do

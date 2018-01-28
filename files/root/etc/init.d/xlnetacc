@@ -7,8 +7,6 @@ SERVICE_DAEMONIZE=1
 NAME=xlnetacc
 
 start() {
-	pidof "${NAME}.sh" >/dev/null 2>&1 && return
-
 	config_load "$NAME"
 	config_get_bool enabled "general" "enabled" 0
 	config_get_bool down_acc "general" "down_acc" 0
@@ -27,18 +25,12 @@ stop() {
 
 	local pid spid
 	for pid in $(pidof "${NAME}.sh"); do
-		kill $pid >/dev/null 2>&1
 		echo "Stop XLNetAcc process PID: $pid"
+		kill $pid >/dev/null 2>&1
 		for spid in $(pgrep -P $pid "sleep"); do
-			kill $spid >/dev/null 2>&1
 			echo "Stop XLNetAcc process SPID: $spid"
+			kill $spid >/dev/null 2>&1
 		done
 	done
 	logger -p "daemon.notice" -t "$NAME" "XLNetAcc has stoped."
-}
-
-restart() {
-	stop
-	sleep 3
-	start
 }
