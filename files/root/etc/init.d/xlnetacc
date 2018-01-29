@@ -34,3 +34,9 @@ stop() {
 	done
 	logger -p "daemon.notice" -t "$NAME" "XLNetAcc has stoped."
 }
+
+restart() {
+	stop
+	sleep 3
+	start
+}

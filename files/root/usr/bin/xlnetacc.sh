@@ -540,7 +540,7 @@ xlnetacc_var() {
 
 # 重试循环
 xlnetacc_retry() {
-	if [ $# -ge 3 -a "$3" != "*" ]; then
+	if [ $# -ge 3 -a $3 -ne 0 ]; then
 		[ $2 -eq 1 -a $down_acc -ne $3 ] && return 0
 		[ $2 -eq 2 -a $up_acc -ne $3 ] && return 0
 	fi
@@ -567,7 +567,7 @@ xlnetacc_logout() {
 
 	xlnetacc_retry 'isp_recover' 1 2 $retry
 	xlnetacc_retry 'isp_recover' 2 2 $retry
-	xlnetacc_retry 'swjsq_logout' * * $retry
+	xlnetacc_retry 'swjsq_logout' 0 0 $retry
 	[ $down_acc -ne 0 ] && down_acc=1; [ $up_acc -ne 0 ] && up_acc=1
 	_sessionid=; _dial_account=
 
@@ -647,7 +647,7 @@ xlnetacc_main() {
 		xlnetacc_logout 3 && sleep 3s
 
 		# 更新协议版本
-#		xlnetacc_retry 'swjsq_update' * * 10
+#		xlnetacc_retry 'swjsq_update' 0 0 10
 
 		# 登录快鸟帐号
 		while : ; do
