@@ -21,7 +21,7 @@ start() {
 }
 
 stop() {
-	pidof "${NAME}.sh" >/dev/null 2>&1 || return
+	pidof "${NAME}.sh" >/dev/null 2>&1 || return 1
 
 	local pid spid
 	for pid in $(pidof "${NAME}.sh"); do
@@ -33,10 +33,10 @@ stop() {
 		done
 	done
 	logger -p "daemon.notice" -t "$NAME" "XLNetAcc has stoped."
+	return 0
 }
 
 restart() {
-	stop
-	sleep 3
+	stop && sleep 3
 	start
 }

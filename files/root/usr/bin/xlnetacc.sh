@@ -403,18 +403,20 @@ isp_bandwidth() {
 			json_get_var bind_dial_account "bind_dial_account"
 			json_get_var dial_account "dial_account"
 			if [ -n "$bind_dial_account" -a "$bind_dial_account" != "$dial_account" ]; then
-				lasterr=-2
 				local outmsg="绑定宽带账号 $bind_dial_account 与当前宽带账号 $dial_account 不一致，请联系迅雷客服解绑（每月仅一次）"; \
 					_log "$outmsg" $(( 1 | 8 | 32 ))
+				down_acc=0; up_acc=0
 			else
 				_dial_account=$dial_account
 				_log "_dial_account is $_dial_account" $(( 1 | 4 ))
 				[ -z "$bind_dial_account" ] && _needbind=1
 				[ $down_acc -eq 1 ] && get_bandwidth 1 "$ret"
 				[ $up_acc -eq 1 ] && get_bandwidth 2 "$ret"
-				[ $down_acc -eq 0 -a $up_acc -eq 0 ] && lasterr=-2
 			fi
 			;;
+		724) # 724 账号存在异常
+			lasterr=-2
+			local outmsg="获取网络带宽信息失败。原因: 您的账号存在异常，请联系迅雷客服反馈"; _log "$outmsg" $(( 1 | 8 | 32 ));;
 		-1)
 			local outmsg="获取网络带宽信息失败。运营商服务器未响应，请稍候"; _log "$outmsg";;
 		*)
@@ -669,17 +671,18 @@ xlnetacc_main() {
 		# 获取提速入口
 		get_portal
 		# 获取带宽信息
-		xlnetacc_retry 'isp_bandwidth' || break
+		xlnetacc_retry 'isp_bandwidth' 0 0 10 || { sleep 3m; continue; }
+		[ $down_acc -eq 0 -a $up_acc -eq 0 ] && break
 		# 带宽提速
-		xlnetacc_retry 'isp_upgrade' 1 1 10 || break
-		xlnetacc_retry 'isp_upgrade' 2 1 10 || break
+		xlnetacc_retry 'isp_upgrade' 1 1 10 || { sleep 3m; continue; }
+		xlnetacc_retry 'isp_upgrade' 2 1 10 || { sleep 3m; continue; }
 
 		# 心跳保持
 		while : ; do
 			clean_log # 清理日志
 			sleep 10m
-			xlnetacc_retry 'isp_keepalive' 1 2 3 || break
-			xlnetacc_retry 'isp_keepalive' 2 2 3 || break
+			xlnetacc_retry 'isp_keepalive' 1 2 10 || break
+			xlnetacc_retry 'isp_keepalive' 2 2 10 || break
 		done
 	done
 	xlnetacc_logout
