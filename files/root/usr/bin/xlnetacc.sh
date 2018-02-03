@@ -113,7 +113,7 @@ get_bind_ip() {
 
 # 定义基本 HTTP 命令和参数
 gen_http_cmd() {
-	_http_cmd="wget-ssl -nv -t 1 -T 5 -O - --no-check-certificate --no-proxy --compression=gzip"
+	_http_cmd="wget-ssl -nv -t 1 -T 5 -O - --no-check-certificate"
 	_http_cmd="$_http_cmd --bind-address=$_bind_ip"
 }
 
@@ -142,27 +142,6 @@ gen_device_sign() {
 		| openssl sha1 | awk '{print $2}')
 	readonly _devicesign="div101.${fake_device_id}"$(echo -n "$fake_device_sign" | md5sum | awk '{print $1}')
 	_log "_devicesign is $_devicesign" $(( 1 | 4 ))
-}
-
-# 协议版本更新
-swjsq_update() {
-	json_init
-	json_add_string protocolVersion "$protocolVersion"
-	json_add_string clientVersion "$clientVersion"
-	json_add_string businesType "$businessType"
-	json_add_string platformVersion '10'
-	json_add_string sdkVersion "$sdkVersion"
-	json_add_string appName "$packageName"
-	json_add_string deviceID "${_devicesign:7:32}"
-	json_close_object
-
-	user_agent='Dalvik/2.1.0 (Linux; U; Android 7.1.1)'
-	local ret=$($_http_cmd --user-agent="$user_agent" 'http://stat.login.xunlei.com/update' --post-data="$(json_dump)")
-	_log "update is $ret" $(( 1 | 4 ))
-	json_cleanup; json_load "$ret" >/dev/null 2>&1
-	json_get_var lasterr "errorCode"
-
-	[ $lasterr -eq 0 ] && return 0 || return 1
 }
 
 # 快鸟帐号通用参数
@@ -647,9 +626,6 @@ xlnetacc_main() {
 
 		# 注销快鸟帐号
 		xlnetacc_logout 3 && sleep 3s
-
-		# 更新协议版本
-#		xlnetacc_retry 'swjsq_update' 0 0 10
 
 		# 登录快鸟帐号
 		while : ; do
