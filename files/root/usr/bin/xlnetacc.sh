@@ -22,8 +22,6 @@ _loginkey=
 _sessionid=
 _portal_down=
 _portal_up=
-_cur_down=
-_cur_up=
 _dial_account=
 access_url=
 http_args=
@@ -269,14 +267,18 @@ swjsq_getuserinfo() {
 				json_select ".." >/dev/null 2>&1
 				let index++
 				([ $1 -eq 1 -a ${vasid:-0} -eq 2 ] || [ ${vasid:-0} -eq $_vasid ]) && \
-					[ ${isVip:-0} -eq 1 -o ${isYear:-0} -eq 1 ] && \
-					[ ! "${expireDate:-00000000}" \< "$(date +'%Y%m%d')" ] && { can_upgrade=1; break; }
+					[ ${isVip:-0} -eq 1 -o ${isYear:-0} -eq 1 ] && { can_upgrade=1; break; }
 			done
 			if [ ${can_upgrade:-0} -eq 1 ]; then
 				outmsg="获取${outmsg}信息成功。会员到期时间：${expireDate:0:4}-${expireDate:4:2}-${expireDate:6:2}"; \
 					_log "$outmsg" $(( 1 | $1 * 8 ))
 			else
-				outmsg="${outmsg}无效或已到期"; _log "$outmsg" $(( 1 | $1 * 8 | 32 ))
+				if [ ${#expireDate} -ge 8 ]; then
+					outmsg="${outmsg}已到期。会员到期时间：${expireDate:0:4}-${expireDate:4:2}-${expireDate:6:2}"
+				else
+					outmsg="${outmsg}无效"
+				fi
+				_log "$outmsg" $(( 1 | $1 * 8 | 32 ))
 				[ $1 -eq 1 ] && down_acc=0 || up_acc=0
 			fi
 			;;
@@ -369,13 +371,6 @@ isp_bandwidth() {
 					_log "$outmsg" $(( 1 | $1 * 8 ))
 				[ $1 -eq 1 ] && down_acc=0 || up_acc=0
 			else
-				if [ $1 -eq 1 ]; then
-					_cur_down=$cur_bandwidth
-					_log "_cur_down is $_cur_down" $(( 1 | 4 ))
-				else
-					_cur_up=$cur_bandwidth
-					_log "_cur_up is $_cur_up" $(( 1 | 4 ))
-				fi
 				if [ -z "$_dial_account" -a -n "$dial_account" ]; then
 					_dial_account=$dial_account
 					_log "_dial_account is $_dial_account" $(( 1 | 4 ))
@@ -414,14 +409,17 @@ isp_upgrade() {
 	json_get_var lasterr "errno"
 
 	case ${lasterr:=-1} in
-		0|812) # 812 已处于提速状态
-			lasterr=0
-			local cur_bandwidth max_bandwidth
-			[ $1 -eq 1 ] && cur_bandwidth=$_cur_down || cur_bandwidth=$_cur_up
+		0)
+			local max_bandwidth
 			json_select "bandwidth" >/dev/null 2>&1
 			json_get_var max_bandwidth "downstream"
 			max_bandwidth=$(expr ${max_bandwidth:-0} / 1024)
-			local outmsg="${link_cn}提速成功，带宽已从 ${cur_bandwidth}M 提升到 ${max_bandwidth}M"; _log "$outmsg" $(( 1 | $1 * 8 ))
+			local outmsg="${link_cn}提速成功，带宽已提升到 ${max_bandwidth}M"; _log "$outmsg" $(( 1 | $1 * 8 ))
+			[ $1 -eq 1 ] && down_acc=2 || up_acc=2
+			;;
+		812) # 812 已处于提速状态
+			lasterr=0
+			local outmsg="${link_cn}提速成功，当前宽带已处于提速状态"; _log "$outmsg" $(( 1 | $1 * 8 ))
 			[ $1 -eq 1 ] && down_acc=2 || up_acc=2
 			;;
 		724) # 724 账号存在异常
@@ -452,7 +450,7 @@ isp_keepalive() {
 			local outmsg="${link_cn}心跳信号返回正常"; _log "$outmsg";;
 		513) # 513 提速通道不存在
 			lasterr=-2
-			local outmsg="${link_cn}提速失效。原因: 提速通道不存在"; _log "$outmsg" $(( 1 | $1 * 8 | 32 ));;
+			local outmsg="${link_cn}提速超时。原因: 提速通道不存在"; _log "$outmsg" $(( 1 | $1 * 8 | 32 ));;
 		-1)
 			local outmsg="${link_cn}心跳信号发送失败。运营商服务器未响应，请稍候"; _log "$outmsg";;
 		*)
@@ -475,8 +473,7 @@ isp_recover() {
 
 	case ${lasterr:=-1} in
 		0)
-			[ $1 -eq 1 ] && local cur_bandwidth=$_cur_down || local cur_bandwidth=$_cur_up
-			local outmsg="${link_cn}带宽已恢复到 ${cur_bandwidth}M"; _log "$outmsg" $(( 1 | $1 * 8 ))
+			local outmsg="${link_cn}带宽已恢复"; _log "$outmsg" $(( 1 | $1 * 8 ))
 			[ $1 -eq 1 ] && down_acc=1 || up_acc=1;;
 		-1)
 			local outmsg="${link_cn}带宽恢复失败。运营商服务器未响应，请稍候"; _log "$outmsg";;
