@@ -13,8 +13,9 @@ readonly client_type_down='android-swjsq'
 readonly client_type_up='android-uplink'
 
 # 声明全局变量
+_ifname=
 _bind_ip=
-_http_cmd=
+_http_cmd_v2=
 _peerid=
 _devicesign=
 _userid=
@@ -89,6 +90,17 @@ clean_log() {
 	unset logdata
 }
 
+# 获取接口
+get_ifname() {
+	while : ; do
+		_ifname=$(uci get "network.$network.ifname" 2> /dev/null)
+		[ -z "$_ifname" ] && { _ifname=pppoe-$network; }
+		[ "${_ifname:0:1}" == "@" ] && network="${_ifname:1}" || break
+	done
+	[ -z "$_ifname" ] && { _log "获取网络 $network 信息出错"; return 01; }
+	return 0;
+}
+
 # 获取接口IP地址
 get_bind_ip() {
 	json_cleanup; json_load "$(ubus call network.interface.$network status 2> /dev/null)" >/dev/null 2>&1
@@ -104,9 +116,9 @@ get_bind_ip() {
 }
 
 # 定义基本 HTTP 命令和参数
-gen_http_cmd() {
-	_http_cmd="wget-ssl -nv -t 1 -T 5 -O - --no-check-certificate"
-	_http_cmd="$_http_cmd --bind-address=$_bind_ip"
+gen_http_cmd_v2() {
+	_http_cmd_v2="curl -s -k -m 5 -o -"
+	_http_cmd_v2="$_http_cmd_v2 --interface $_ifname"
 }
 
 # 生成设备标识
@@ -114,6 +126,7 @@ gen_device_sign() {
 	local ifname macaddr
 	while : ; do
 		ifname=$(uci get "network.$network.ifname" 2> /dev/null)
+		[ -z "$ifname" ] && { ifname=pppoe-$network; }
 		[ "${ifname:0:1}" == "@" ] && network="${ifname:1}" || break
 	done
 	[ -z "$ifname" ] && { _log "获取网络 $network 信息出错"; return; }
@@ -175,7 +188,7 @@ swjsq_login() {
 	fi
 	json_close_object
 
-	local ret=$($_http_cmd --user-agent="$agent_xl" "$access_url" --post-data="$(json_dump)")
+	local ret=$($_http_cmd_v2 -A "$agent_xl" "$access_url" -d "$(json_dump)")
 	case $? in
 		0)
 			_log "login is $ret" $(( 1 | 4 ))
@@ -200,9 +213,9 @@ swjsq_login() {
 		-1)
 			local outmsg="帐号登录失败。迅雷服务器未响应，请稍候"; _log "$outmsg";;
 		-2)
-			local outmsg="Wget 参数解析错误，请更新 GNU Wget"; _log "$outmsg" $(( 1 | 8 | 32 ));;
+			local outmsg="cURL 参数解析错误，请更新 cURL"; _log "$outmsg" $(( 1 | 8 | 32 ));;
 		-3)
-			local outmsg="Wget 网络通信失败，请稍候"; _log "$outmsg";;
+			local outmsg="cURL 网络通信失败，请稍候"; _log "$outmsg";;
 		*)
 			local errorDesc; json_get_var errorDesc "errorDesc"
 			local outmsg="帐号登录失败。错误代码: ${lasterr}"; \
@@ -219,7 +232,7 @@ swjsq_logout() {
 	json_add_string sessionID "$_sessionid"
 	json_close_object
 
-	local ret=$($_http_cmd --user-agent="$agent_xl" 'https://mobile-login.xunlei.com/logout' --post-data="$(json_dump)")
+	local ret=$($_http_cmd_v2 -A "$agent_xl" 'https://mobile-login.xunlei.com/logout' -d "$(json_dump)")
 	_log "logout is $ret" $(( 1 | 4 ))
 	json_cleanup; json_load "$ret" >/dev/null 2>&1
 	json_get_var lasterr "errorCode"
@@ -249,7 +262,7 @@ swjsq_getuserinfo() {
 	json_add_string vasid "$_vasid"
 	json_close_object
 
-	local ret=$($_http_cmd --user-agent="$agent_xl" 'https://mobile-login.xunlei.com/getuserinfo' --post-data="$(json_dump)")
+	local ret=$($_http_cmd_v2 -A "$agent_xl" 'https://mobile-login.xunlei.com/getuserinfo' -d "$(json_dump)")
 	_log "getuserinfo is $ret" $(( 1 | 4 ))
 	json_cleanup; json_load "$ret" >/dev/null 2>&1
 	json_get_var lasterr "errorCode"
@@ -306,7 +319,7 @@ swjsq_renewal() {
 	local limitdate=$(date +%Y%m%d -d "1970.01.01-00:00:$(( $(date +%s) + 30 * 24 * 60 * 60 ))")
 
 	access_url='http://api.ext.swjsq.vip.xunlei.com'
-	local ret=$($_http_cmd --user-agent="$user_agent" "$access_url/renewal?${http_args%&dial_account=*}&limitdate=$limitdate")
+	local ret=$($_http_cmd_v2 -A "$user_agent" "$access_url/renewal?${http_args%&dial_account=*}&limitdate=$limitdate")
 	_log "renewal is $ret" $(( 1 | 4 ))
 	json_cleanup; json_load "$ret" >/dev/null 2>&1
 	json_get_var lasterr "errno"
@@ -331,7 +344,7 @@ swjsq_portal() {
 
 	[ $1 -eq 1 ] && access_url='http://api.portal.swjsq.vip.xunlei.com:81/v2/queryportal' || \
 		access_url='http://api.upportal.swjsq.vip.xunlei.com/v2/queryportal'
-	local ret=$($_http_cmd --user-agent="$user_agent" "$access_url")
+	local ret=$($_http_cmd_v2 -A "$user_agent" "$access_url")
 	_log "portal $1 is $ret" $(( 1 | 4 ))
 	json_cleanup; json_load "$ret" >/dev/null 2>&1
 	json_get_var lasterr "errno"
@@ -368,7 +381,7 @@ swjsq_portal() {
 isp_bandwidth() {
 	xlnetacc_var $1
 
-	local ret=$($_http_cmd --user-agent="$user_agent" "$access_url/bandwidth?${http_args%&dial_account=*}")
+	local ret=$($_http_cmd_v2 -A "$user_agent" "$access_url/bandwidth?${http_args%&dial_account=*}")
 	_log "bandwidth $1 is $ret" $(( 1 | 4 ))
 	json_cleanup; json_load "$ret" >/dev/null 2>&1
 	json_get_var lasterr "errno"
@@ -435,7 +448,7 @@ isp_bandwidth() {
 isp_upgrade() {
 	xlnetacc_var $1
 
-	local ret=$($_http_cmd --user-agent="$user_agent" "$access_url/upgrade?$http_args")
+	local ret=$($_http_cmd_v2 -A "$user_agent" "$access_url/upgrade?$http_args")
 	_log "upgrade $1 is $ret" $(( 1 | 4 ))
 	json_cleanup; json_load "$ret" >/dev/null 2>&1
 	json_get_var lasterr "errno"
@@ -472,7 +485,7 @@ isp_upgrade() {
 isp_keepalive() {
 	xlnetacc_var $1
 
-	local ret=$($_http_cmd --user-agent="$user_agent" "$access_url/keepalive?$http_args")
+	local ret=$($_http_cmd_v2 -A "$user_agent" "$access_url/keepalive?$http_args")
 	_log "keepalive $1 is $ret" $(( 1 | 4 ))
 	json_cleanup; json_load "$ret" >/dev/null 2>&1
 	json_get_var lasterr "errno"
@@ -498,7 +511,7 @@ isp_keepalive() {
 isp_recover() {
 	xlnetacc_var $1
 
-	local ret=$($_http_cmd --user-agent="$user_agent" "$access_url/recover?$http_args")
+	local ret=$($_http_cmd_v2 -A "$user_agent" "$access_url/recover?$http_args")
 	_log "recover $1 is $ret" $(( 1 | 4 ))
 	json_cleanup; json_load "$ret" >/dev/null 2>&1
 	json_get_var lasterr "errno"
@@ -522,7 +535,7 @@ isp_recover() {
 isp_query() {
 	xlnetacc_var $1
 
-	local ret=$($_http_cmd --user-agent="$user_agent" "$access_url/query_try_info?$http_args")
+	local ret=$($_http_cmd_v2 -A "$user_agent" "$access_url/query_try_info?$http_args")
 	_log "query_try_info $1 is $ret" $(( 1 | 4 ))
 	json_cleanup; json_load "$ret" >/dev/null 2>&1
 	json_get_var lasterr "errno"
@@ -629,7 +642,7 @@ xlnetacc_init() {
 	_log "迅雷快鸟正在启动..."
 
 	# 检查外部调用工具
-	command -v wget-ssl >/dev/null || { _log "GNU Wget 未安装"; return 3; }
+	command -v  curl >/dev/null || { _log "cURL 未安装"; return 3; }
 	local opensslchk=$(echo -n 'openssl' | openssl dgst -sha1 | awk '{print $2}')
 	[ "$opensslchk" != 'c898fa1e7226427010e329971e82c669f8d8abb4' ] && { _log "openssl-util 未安装或计算错误"; return 3; }
 
@@ -653,7 +666,8 @@ xlnetacc_main() {
 	while : ; do
 		# 获取外网IP地址
 		xlnetacc_retry 'get_bind_ip'
-		gen_http_cmd
+		xlnetacc_retry 'get_ifname'
+		gen_http_cmd_v2
 
 		# 注销快鸟帐号
 		xlnetacc_logout 3 && sleep 3s
@@ -665,8 +679,8 @@ xlnetacc_main() {
 			case $lasterr in
 				0) break;; # 登录成功
 				-1) sleep 5s;; # 服务器未响应
-				-2) return 7;; # Wget 参数解析错误
-				-3) sleep 3s;; # Wget 网络通信失败
+				-2) return 7;; # cURL 参数解析错误
+				-3) sleep 3s;; # cURL 网络通信失败
 				6) sleep 130m;; # 需要输入验证码
 				8) sleep 3m;; # 服务器系统维护
 				15) sleep 1s;; # 身份信息已失效
