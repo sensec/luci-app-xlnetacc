@@ -2,4 +2,6 @@
 config general 'general'
 	option enabled '0'
 	option network 'wan'
-
+	option base_url 'https://openrouter.ai/api/v1'
+	option model 'amazon/nova-2-lite-v1:free'
+	option api_key ''

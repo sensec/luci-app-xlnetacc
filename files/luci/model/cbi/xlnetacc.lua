@@ -48,4 +48,13 @@ o = s:option(Value, "account", translate("XLNetAcc account"))
 o = s:option(Value, "password", translate("XLNetAcc password"))
 o.password = true
 
+o = s:option(Value, "base_url", translate("Captcha AI Base URL"), translate("Endpoint base URL for captcha recognition, default uses OpenRoute."))
+o.placeholder = "https://openrouter.ai/api/v1"
+
+o = s:option(Value, "api_key", translate("Captcha AI API Key"), translate("Leave empty to switch back to manual captcha input."))
+o.password = true
+
+o = s:option(Value, "model", translate("Captcha AI Model"), translate("Model name for captcha recognition."))
+o.placeholder = "google/gemini-2.0-flash-exp:free"
+
 return m

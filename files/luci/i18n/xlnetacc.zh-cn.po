@@ -76,6 +76,24 @@ msgstr "迅雷快鸟帐号"
 msgid "XLNetAcc password"
 msgstr "迅雷快鸟密码"
 
+msgid "Captcha AI Base URL"
+msgstr "验证码识别 Base URL"
+
+msgid "Endpoint base URL for captcha recognition, default uses OpenRoute."
+msgstr "验证码识别服务的基础地址，默认使用 OpenRoute。"
+
+msgid "Captcha AI API Key"
+msgstr "验证码识别 API Key"
+
+msgid "Leave empty to switch back to manual captcha input."
+msgstr "留空则使用手动输入验证码。"
+
+msgid "Captcha AI Model"
+msgstr "验证码识别模型"
+
+msgid "Model name for captcha recognition."
+msgstr "用于验证码识别的模型名称。"
+
 msgid "Does not store the plaintext password, automatically emptied after start."
 msgstr "不存储明文密码，启动后自动清空。"
 

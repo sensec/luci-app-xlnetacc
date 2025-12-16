@@ -5,7 +5,7 @@ readonly packageName='com.xunlei.vip.swjsq'
 readonly protocolVersion=300
 readonly businessType=68
 readonly sdkVersion='3.1.2.185150'
-readonly clientVersion='2.7.2.0'
+readonly clientVersion='2.9.2.0'
 readonly agent_xl="android-ok-http-client/xl-acc-sdk/version-$sdkVersion"
 readonly agent_down='okhttp/3.9.1'
 readonly agent_up='android-async-http/xl-acc-sdk/version-1.0.0.1'
@@ -28,6 +28,10 @@ http_args=
 user_agent=
 link_cn=
 lasterr=
+chatgpt_base_url=
+chatgpt_api_key=
+chatgpt_model=
+captcha_auto_retry=0
 sequence_xl=1000000
 sequence_down=$(( $(date +%s) / 6 ))
 sequence_up=$sequence_down
@@ -96,7 +100,7 @@ get_bind_ip() {
 	json_get_var _bind_ip "address"
 	if [ -z "$_bind_ip" -o "$_bind_ip"x == "0.0.0.0"x ]; then
 		_log "获取网络 $network IP地址失败"
-		return 1
+		return 0
 	else
 		_log "绑定IP地址: $_bind_ip"
 		return 0
@@ -106,19 +110,34 @@ get_bind_ip() {
 # 定义基本 HTTP 命令和参数
 gen_http_cmd() {
 	_http_cmd="wget-ssl -nv -t 1 -T 5 -O - --no-check-certificate"
-	_http_cmd="$_http_cmd --bind-address=$_bind_ip"
+	[ -n "$_bind_ip" ] && _http_cmd="$_http_cmd --bind-address=$_bind_ip"
 }
 
 # 生成设备标识
 gen_device_sign() {
 	local ifname macaddr
-	while : ; do
-		ifname=$(uci get "network.$network.ifname" 2> /dev/null)
-		[ "${ifname:0:1}" == "@" ] && network="${ifname:1}" || break
-	done
+	json_cleanup
+	if json_load "$(ubus call network.interface.$network status 2> /dev/null)" >/dev/null 2>&1; then
+		json_get_var ifname "device"
+		json_get_var l3_device "l3_device"
+		[ -z "$ifname" ] && ifname="$l3_device"
+	fi
+
+	if [ -z "$ifname" ]; then
+		while : ; do
+			ifname=$(uci get "network.$network.ifname" 2> /dev/null)
+			[ "${ifname:0:1}" == "@" ] && network="${ifname:1}" || break
+		done
+	fi
+
 	[ -z "$ifname" ] && { _log "获取网络 $network 信息出错"; return; }
-	json_cleanup; json_load "$(ubus call network.device status {\"name\":\"$ifname\"} 2> /dev/null)" >/dev/null 2>&1
-	json_get_var macaddr "macaddr"
+
+	if [ -e "/sys/class/net/$ifname/address" ]; then
+		macaddr=$(cat "/sys/class/net/$ifname/address")
+	else
+		json_cleanup; json_load "$(ubus call network.device status {\"name\":\"$ifname\"} 2> /dev/null)" >/dev/null 2>&1
+		json_get_var macaddr "macaddr"
+	fi
 	[ -z "$macaddr" ] && { _log "获取网络 $network MAC地址出错"; return; }
 	macaddr=$(echo -n "$macaddr" | awk '{print toupper($0)}')
 
@@ -155,18 +174,136 @@ swjsq_json() {
 	json_add_string providerName 'OTHER'
 	json_add_string deviceModel 'MI'
 	json_add_string deviceName 'Xiaomi Mi'
-	json_add_string OSVersion "7.1.1"
+	json_add_string OSVersion "16"
+}
+
+# 获取图形验证码
+swjsq_get_verify_code() {
+	local verify_type=$1
+	local url="http://verify2.xunlei.com/image?t=${verify_type}"
+	local image_file="/tmp/xlnetacc_verify.jpg"
+	local key_file="/tmp/xlnetacc_verify_key"
+	local header_file="/tmp/xlnetacc_headers"
+
+	$_http_cmd -S -O "$image_file" "$url" >/dev/null 2> "$header_file"
+	local key=$(grep "Set-Cookie:" "$header_file" | grep "VERIFY_KEY" | sed 's/.*VERIFY_KEY=\([^;]*\).*/\1/')
+
+	if [ -n "$key" ]; then
+		echo -n "$key" > "$key_file"
+		cp "$image_file" "/www/luci-static/resources/xlnetacc_verify.jpg" 2>/dev/null
+		_log "已下载验证码至 /www/luci-static/resources/xlnetacc_verify.jpg，KEY: $key"
+	else
+		_log "下载验证码失败"
+	fi
+	rm -f "$header_file"
+}
+
+# 使用 AI 识别验证码
+swjsq_ai_recognize() {
+	local image_file=$1
+	[ -s "$image_file" ] || return 1
+	[ -z "$chatgpt_api_key" ] && return 2
+
+	local endpoint="${chatgpt_base_url:-https://openrouter.ai/api/v1}"
+	case "$endpoint" in
+		*/chat/completions) ;;
+		*/) endpoint="${endpoint}chat/completions";;
+		*) endpoint="${endpoint%/}/chat/completions";;
+	esac
+	local model="${chatgpt_model:-google/gemini-2.0-flash-exp:free}"
+	local img_base64=$(base64 "$image_file" | tr -d '\n')
+	[ -z "$img_base64" ] && return 1
+
+	local payload="/tmp/xlnetacc_chat_payload.json"
+	cat > "$payload" <<-EOF
+	{
+	  "model": "$model",
+	  "messages": [
+	    {
+	      "role": "user",
+	      "content": [
+	        { "type": "text", "text": "识别图片中的验证码，仅返回验证码字符，勿添加其他内容。" },
+	        { "type": "image_url", "image_url": { "url": "data:image/jpeg;base64,$img_base64" } }
+	      ]
+	    }
+	  ],
+	  "max_tokens": 30,
+	  "temperature": 0
+	}
+	EOF
+
+	local response
+	response=$($_http_cmd --header="Content-Type: application/json" --header="Authorization: Bearer $chatgpt_api_key" --post-file="$payload" "$endpoint")
+	local ret=$?
+	rm -f "$payload"
+	[ $ret -ne 0 ] && { _log "验证码识别请求失败" $(( 1 | 4 )); return 1; }
+
+	local content
+	json_cleanup; json_load "$response" >/dev/null 2>&1
+	json_select "choices" >/dev/null 2>&1 || return 1
+	json_select 1 >/dev/null 2>&1 || return 1
+	json_select "message" >/dev/null 2>&1 || return 1
+	json_get_var content "content"
+	json_select ".." >/dev/null 2>&1
+	json_select ".." >/dev/null 2>&1
+	json_select ".." >/dev/null 2>&1
+	[ -z "$content" ] && return 1
+	content=$(echo "$content" | tr -d '\r' | head -n 1)
+	content=$(echo "$content" | tr -d ' \t\r\n')
+	echo -n "$content"
+	return 0
+}
+
+# 自动识别验证码并重试登录
+swjsq_auto_verify() {
+	local verify_type=$1
+	local code_file="/tmp/xlnetacc_verify_code"
+	local image_file="/tmp/xlnetacc_verify.jpg"
+	local max_retry=5
+
+	[ -n "$chatgpt_api_key" ] || return 1
+	while [ $captcha_auto_retry -lt $max_retry ]; do
+		local code=$(swjsq_ai_recognize "$image_file")
+		captcha_auto_retry=$(( $captcha_auto_retry + 1 ))
+		if [ -n "$code" ]; then
+			echo -n "$code" > "$code_file"
+			_log "自动识别验证码: $code (第${captcha_auto_retry}次尝试)"
+			swjsq_login
+			return $?
+		fi
+		_log "自动识别验证码失败 (第${captcha_auto_retry}次)，重新获取验证码"
+		swjsq_get_verify_code "${verify_type:-MEA}"
+	done
+	_log "自动识别验证码失败次数达到上限，切换为手动输入模式"
+	return 1
 }
 
 # 帐号登录
 swjsq_login() {
 	swjsq_json
+	local cookie_args=""
 	if [ -z "$_userid" -o -z "$_loginkey" ]; then
 		access_url='https://mobile-login.xunlei.com/login'
 		json_add_string userName "$username"
 		json_add_string passWord "$password"
-		json_add_string verifyKey
-		json_add_string verifyCode
+		
+		local vcode_file="/tmp/xlnetacc_verify_code"
+		local vcode=""
+		if [ -s "$vcode_file" ]; then
+			vcode=$(cat "$vcode_file")
+		else
+			vcode=$(uci_get_by_name "general" "verify_code")
+		fi
+
+		local vkey=$(cat /tmp/xlnetacc_verify_key 2>/dev/null)
+		if [ -n "$vcode" ] && [ -n "$vkey" ]; then
+			json_add_string verifyKey "$vkey"
+			json_add_string verifyCode "$vcode"
+			cookie_args="--header=Cookie:VERIFY_KEY=$vkey"
+		else
+			json_add_string verifyKey
+			json_add_string verifyCode
+		fi
 		json_add_string isMd5Pwd '0'
 	else
 		access_url='https://mobile-login.xunlei.com/loginkey'
@@ -175,7 +312,7 @@ swjsq_login() {
 	fi
 	json_close_object
 
-	local ret=$($_http_cmd --user-agent="$agent_xl" "$access_url" --post-data="$(json_dump)")
+	local ret=$($_http_cmd $cookie_args --user-agent="$agent_xl" "$access_url" --post-data="$(json_dump)")
 	case $? in
 		0)
 			_log "login is $ret" $(( 1 | 4 ))
@@ -194,6 +331,42 @@ swjsq_login() {
 			json_get_var _sessionid "sessionID"
 			_log "_sessionid is $_sessionid" $(( 1 | 4 ))
 			local outmsg="帐号登录成功"; _log "$outmsg" $(( 1 | 8 ))
+			captcha_auto_retry=0
+			rm -f /tmp/xlnetacc_verify.jpg /tmp/xlnetacc_verify_key /tmp/xlnetacc_verify_code 2>/dev/null
+			;;
+		6)
+			local verify_type
+			json_get_var verify_type "verifyType"
+			local outmsg="帐号登录失败。需要输入图形验证码"; _log "$outmsg" $(( 1 | 8 | 32 ))
+			swjsq_get_verify_code "${verify_type:-MEA}"
+			
+			local wait_time=180
+			local code_file="/tmp/xlnetacc_verify_code"
+			rm -f "$code_file"
+			if [ -z "$chatgpt_api_key" ]; then
+				_log "未配置验证码识别 API Key，使用手动输入模式"
+			else
+				swjsq_auto_verify "${verify_type:-MEA}"
+				[ $? -eq 0 ] && return 0
+			fi
+
+			_log "请查看 /www/luci-static/resources/xlnetacc_verify.jpg 获取验证码"
+			_log "或打开浏览器访问 http://<路由器IP地址>/luci-static/resources/xlnetacc_verify.jpg"
+			_log "请在 ${wait_time} 秒内将验证码写入 $code_file"
+			_log "命令示例: echo 'abcd' > $code_file"
+			
+			local i=0
+			while [ $i -lt $wait_time ]; do
+				if [ -s "$code_file" ]; then
+					_log "检测到验证码，重试登录..."
+					swjsq_login
+					return $?
+				fi
+				sleep 1
+				let i++
+			done
+			_log "等待验证码超时"
+			return 1
 			;;
 		15) # 身份信息已失效
 			_userid=; _loginkey=;;
@@ -617,6 +790,11 @@ xlnetacc_init() {
 	relogin=$(uci_get_by_name "general" "relogin" 0)
 	readonly username=$(uci_get_by_name "general" "account")
 	readonly password=$(uci_get_by_name "general" "password")
+	chatgpt_base_url=$(uci_get_by_name "general" "base_url" "https://openrouter.ai/api/v1")
+	chatgpt_model=$(uci_get_by_name "general" "model" "google/gemini-2.0-flash-exp:free")
+	chatgpt_api_key=$(uci_get_by_name "general" "api_key")
+	[ -z "$chatgpt_base_url" ] && chatgpt_base_url="https://openrouter.ai/api/v1"
+	[ -z "$chatgpt_model" ] && chatgpt_model="google/gemini-2.0-flash-exp:free"
 	local enabled=$(uci_get_by_bool "general" "enabled" 0)
 	([ $enabled -eq 0 ] || [ $down_acc -eq 0 -a $up_acc -eq 0 ] || [ -z "$username" -o -z "$password" -o -z "$network" ]) && return 2
 	([ -z "$keepalive" -o -n "${keepalive//[0-9]/}" ] || [ $keepalive -lt 5 -o $keepalive -gt 60 ]) && keepalive=10

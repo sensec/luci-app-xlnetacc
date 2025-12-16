@@ -1,0 +1,150 @@
+name: Manual IPK Build & Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      sdk_url:
+        description: OpenWrt SDK download URL (override when newer versions are available)
+        required: false
+        default: https://downloads.openwrt.org/releases/23.05.5/targets/x86/64/openwrt-sdk-23.05.5-x86-64_gcc-12.3.0_musl.Linux-x86_64.tar.xz
+      package_name:
+        description: Package name to build
+        required: false
+        default: luci-app-xlnetacc
+      release_tag:
+        description: Tag name for the release (auto-generated if empty)
+        required: false
+      release_name:
+        description: Release title (auto-generated if empty)
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang flex bison gawk gettext \
+            libncurses5-dev libssl-dev python3-distutils python3-setuptools \
+            rsync unzip wget
+
+      - name: Download OpenWrt SDK
+        run: |
+          SDK_URL="${{ github.event.inputs.sdk_url }}"
+          
+          mkdir -p /tmp/sdk
+          cd /tmp/sdk
+          wget "$SDK_URL" -O sdk.tar.xz
+          
+          tar xf sdk.tar.xz
+      
+          SDK_DIR_NAME=$(ls -1 -d */ | head -n 1 | sed 's/\///')
+          
+          if [ -z "$SDK_DIR_NAME" ]; then
+            echo "SDK directory not found (extraction failed?)"
+            ls -la
+            exit 1
+          fi
+          
+          SDK_DIR="/tmp/sdk/$SDK_DIR_NAME"
+          echo "Found SDK at: $SDK_DIR"
+      
+          if [ ! -x "$SDK_DIR/scripts/feeds" ]; then
+            echo "Invalid SDK directory structure in $SDK_DIR"
+            ls -R "$SDK_DIR" | head -n 20
+            exit 1
+          fi
+          echo "SDK_DIR=$SDK_DIR" >> $GITHUB_ENV
+
+      - name: Set package variables
+        run: |
+          pkg="${{ github.event.inputs.package_name }}"
+          [ -z "$pkg" ] && pkg="luci-app-xlnetacc"
+          case "$pkg" in
+            *[^A-Za-z0-9_-]*)
+              echo "Invalid package name: $pkg"
+              exit 1
+              ;;
+          esac
+          echo "PKG_NAME=$pkg" >> $GITHUB_ENV
+
+      - name: Prepare feeds
+        run: |
+          cd "$SDK_DIR"
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Add package
+        run: |
+          cd "$SDK_DIR"
+          pkg_dir="package/$PKG_NAME"
+          case "$pkg_dir" in
+            package/*) ;;
+            *) echo "Invalid package path"; exit 1;;
+          esac
+          mkdir -p "$pkg_dir"
+          EXCLUDES=(
+            --exclude .git
+            --exclude .github
+            --exclude .gitignore
+            --exclude '*.swp'
+            --exclude '.*.swp'
+            --exclude .DS_Store
+            --exclude node_modules
+            --exclude '*.tmp'
+          )
+          rsync -a --delete "${EXCLUDES[@]}" "$GITHUB_WORKSPACE/" "$pkg_dir/"
+          echo "CONFIG_PACKAGE_${PKG_NAME}=m" > .config
+          make defconfig
+
+      - name: Build IPK
+        run: |
+          cd "$SDK_DIR"
+          make package/feeds/luci/luci-base/compile V=99
+          make package/$PKG_NAME/compile -j$(nproc) V=s
+          mapfile -t ipk_array < <(find "$SDK_DIR/bin/packages" -type f -path "$SDK_DIR/bin/packages/*/${PKG_NAME}_*.ipk")
+          match_count=${#ipk_array[@]}
+          if [ "$match_count" -eq 0 ]; then
+            echo "IPK not found"
+            exit 1
+          fi
+          if [ "$match_count" -gt 1 ]; then
+            echo "Multiple IPKs found:"
+            printf '%s\n' "${ipk_array[@]}"
+            exit 1
+          fi
+          ipk_path="${ipk_array[0]}"
+          echo "Found IPK: $ipk_path"
+          echo "IPK_PATH=$ipk_path" >> $GITHUB_ENV
+          echo "IPK_NAME=$(basename "$ipk_path")" >> $GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PKG_NAME }}-ipk
+          path: ${{ env.IPK_PATH }}
+
+      - name: Set release variables
+        run: |
+          rel_tag="${{ github.event.inputs.release_tag }}"
+          rel_name="${{ github.event.inputs.release_name }}"
+          [ -z "$rel_tag" ] && rel_tag="ipk-build-${GITHUB_RUN_NUMBER}"
+          [ -z "$rel_name" ] && rel_name="Manual IPK build ${GITHUB_RUN_NUMBER}"
+          echo "REL_TAG=$rel_tag" >> $GITHUB_ENV
+          echo "REL_NAME=$rel_name" >> $GITHUB_ENV
+
+      - name: Publish release asset
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! gh release view "$REL_TAG" >/dev/null 2>&1; then
+            gh release create "$REL_TAG" --title "$REL_NAME" --notes "Automated IPK build."
+          fi
+          gh release upload "$REL_TAG" "$IPK_PATH" --clobber
