@@ -17,6 +17,7 @@ function index()
 	entry({"admin", "services", "xlnetacc", "status"}, call("action_status"))
 	entry({"admin", "services", "xlnetacc", "logdata"}, call("action_log"))
 	entry({"admin", "services", "xlnetacc", "login"}, call("action_login"))
+	entry({"admin", "services", "xlnetacc", "logout"}, call("action_logout"))
 	entry({"admin", "services", "xlnetacc", "captcha"}, call("action_captcha"))
 end
 
@@ -95,6 +96,12 @@ function action_login()
 	local out = util.exec("/usr/bin/xlnetacc.sh --login 2>/dev/null") or ""
 	if out:find('"status":"ok"', 1, true) then
 		result.status = "ok"
+		-- 登录成功：自动启用并重启服务，守护进程会复用刚建立的会话继续提速
+		local uci2 = require "luci.model.uci".cursor()
+		uci2:set("xlnetacc", "general", "enabled", "1")
+		uci2:commit("xlnetacc")
+		uci2:unload("xlnetacc")
+		luci.sys.call("/etc/init.d/xlnetacc restart >/dev/null 2>&1")
 	elseif out:find('"status":"captcha"', 1, true) then
 		result.status = "captcha"
 	else
@@ -103,6 +110,19 @@ function action_login()
 	end
 
 	return reply()
+end
+
+-- 主动注销：停止守护进程，通知迅雷注销并撤销运营商提速
+function action_logout()
+	local util = require "luci.util"
+	luci.sys.call("/etc/init.d/xlnetacc stop >/dev/null 2>&1")
+	util.exec("/usr/bin/xlnetacc.sh --logout 2>/dev/null")
+	local uci = require "luci.model.uci".cursor()
+	uci:set("xlnetacc", "general", "enabled", "0")
+	uci:commit("xlnetacc")
+	uci:unload("xlnetacc")
+	luci.http.prepare_content("application/json")
+	luci.http.write_json({ status = "ok" })
 end
 
 function action_log()

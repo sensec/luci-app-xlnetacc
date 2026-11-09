@@ -218,6 +218,9 @@ swjsq_login() {
 			json_get_var _sessionid "sessionID"
 			_log "_sessionid is $_sessionid" $(( 1 | 4 ))
 			printf '1' > "$login_state_file"
+			printf "_userid='%s'\n_loginkey='%s'\n_sessionid='%s'\n" \
+				"$_userid" "$_loginkey" "$_sessionid" > "$session_file"
+			chmod 600 "$session_file" 2>/dev/null
 			local outmsg="帐号登录成功"; _log "$outmsg" $(( 1 | 8 ))
 			;;
 		15) # 身份信息已失效
@@ -619,7 +622,6 @@ xlnetacc_logout() {
 # 中止信号处理
 sigterm() {
 	_log "trap sigterm, exit" $(( 1 | 4 ))
-	xlnetacc_logout
 	rm -f "$down_state_file" "$up_state_file"
 	exit 0
 }
@@ -641,6 +643,7 @@ xlnetacc_init() {
 	readonly up_state_file=/var/state/${NAME}_up_state
 	readonly login_state_file=/var/state/${NAME}_login_state
 	readonly vip_state_file=/var/state/${NAME}_vip_state
+	readonly session_file=/var/run/${NAME}_session
 	down_acc=$(uci_get_by_bool "general" "down_acc" 0)
 	up_acc=$(uci_get_by_bool "general" "up_acc" 0)
 	readonly logging=$(uci_get_by_bool "general" "logging" 1)
@@ -693,7 +696,16 @@ xlnetacc_main() {
 		xlnetacc_retry 'get_bind_ip'
 		gen_http_cmd
 
-		# 注销快鸟帐号
+		# 优先复用手动登录交来的会话，跳过注销/登录
+		local resumed=0
+		if [ -f "$session_file" ]; then
+			. "$session_file"
+			resumed=1
+			printf '1' > "$login_state_file"
+			_log "复用手动登录会话，继续后续提速流程" $(( 1 | 4 ))
+		fi
+
+		if [ $resumed -eq 0 ]; then
 		xlnetacc_logout 3 && sleep 3s
 
 		# 登录快鸟帐号
@@ -711,9 +723,17 @@ xlnetacc_main() {
 				*) return 5;; # 登录失败
 			esac
 		done
+		fi
 
-		# 获取用户信息
-		xlnetacc_retry 'swjsq_getuserinfo'
+		# 获取用户信息；会话失效时清除并重新登录
+		if ! xlnetacc_retry 'swjsq_getuserinfo' 0 0 3; then
+			_log "会话已失效，清除并重新登录" $(( 1 | 4 ))
+			rm -f "$session_file"
+			_userid=; _loginkey=; _sessionid=
+			printf '0' > "$login_state_file"
+			sleep 3s
+			continue
+		fi
 		[ $down_acc -eq 0 -a $up_acc -eq 0 ] && break
 		# 登录时间更新
 		xlnetacc_retry 'swjsq_renewal'
@@ -751,6 +771,7 @@ xlnetacc_login_once() {
 	readonly up_state_file=/dev/null
 	readonly login_state_file=/var/state/${NAME}_login_state
 	readonly vip_state_file=/var/state/${NAME}_vip_state
+	readonly session_file=/var/run/${NAME}_session
 	down_acc=1
 	up_acc=0
 	logging=1
@@ -792,9 +813,59 @@ xlnetacc_login_once() {
 	esac
 }
 
+# 主动注销（供 LuCI 注销按钮调用）
+xlnetacc_logout_once() {
+	readonly NAME=xlnetacc
+	readonly LOGFILE=/var/log/${NAME}.log
+	readonly down_state_file=/dev/null
+	readonly up_state_file=/dev/null
+	readonly login_state_file=/var/state/${NAME}_login_state
+	readonly vip_state_file=/var/state/${NAME}_vip_state
+	readonly session_file=/var/run/${NAME}_session
+	down_acc=1
+	up_acc=0
+	logging=1
+	verbose=0
+	manual_login=1
+	network=$(uci_get_by_name "general" "network" "wan")
+	timeout=$(uci_get_by_name "general" "timeout" 20)
+	([ -z "$timeout" -o -n "${timeout//[0-9]/}" ] || [ $timeout -lt 5 -o $timeout -gt 120 ]) && timeout=20
+
+	[ -d /var/log ] || mkdir -p /var/log
+
+	if [ -f "$session_file" ]; then
+		. "$session_file"
+	fi
+
+	if [ -z "$_sessionid" ]; then
+		rm -f "$session_file"
+		printf '0' > "$login_state_file"
+		echo '{"status":"ok","message":"no active session"}'
+		return 0
+	fi
+
+	get_bind_ip >/dev/null 2>&1 || { echo '{"status":"error","message":"cannot get wan ip"}'; return 1; }
+	gen_http_cmd
+	gen_device_sign >/dev/null 2>&1
+	[ ${#_peerid} -ne 16 -o ${#_devicesign} -ne 71 ] && { echo '{"status":"error","message":"cannot generate device sign"}'; return 1; }
+
+	# 先取提速入口，才能撤销运营商侧提速
+	xlnetacc_retry 'swjsq_portal' 1 1 1 >/dev/null 2>&1
+	down_acc=2
+	xlnetacc_logout 1 >/dev/null 2>&1
+
+	rm -f "$session_file"
+	printf '0' > "$login_state_file"
+	echo '{"status":"ok"}'
+	return 0
+}
+
 # 程序入口
 if [ "$1" = "--login" ]; then
 	xlnetacc_login_once
+	exit $?
+elif [ "$1" = "--logout" ]; then
+	xlnetacc_logout_once
 	exit $?
 else
 	xlnetacc_init "$@" && xlnetacc_main
