@@ -860,12 +860,45 @@ xlnetacc_logout_once() {
 	return 0
 }
 
+# 获取一张新的验证码图片（供页面点击图片刷新）
+xlnetacc_captcha_once() {
+	readonly NAME=xlnetacc
+	readonly LOGFILE=/var/log/${NAME}.log
+	readonly down_state_file=/dev/null
+	readonly up_state_file=/dev/null
+	readonly login_state_file=/var/state/${NAME}_login_state
+	readonly vip_state_file=/var/state/${NAME}_vip_state
+	readonly session_file=/var/run/${NAME}_session
+	down_acc=0
+	up_acc=0
+	logging=1
+	verbose=0
+	network=$(uci_get_by_name "general" "network" "wan")
+	timeout=$(uci_get_by_name "general" "timeout" 20)
+	([ -z "$timeout" -o -n "${timeout//[0-9]/}" ] || [ $timeout -lt 5 -o $timeout -gt 120 ]) && timeout=20
+
+	[ -d /var/log ] || mkdir -p /var/log
+	get_bind_ip >/dev/null 2>&1 || { echo '{"status":"error","message":"cannot get wan ip"}'; return 1; }
+	gen_http_cmd
+
+	if xlnetacc_fetch_captcha >/dev/null 2>&1; then
+		echo '{"status":"ok"}'
+		return 0
+	else
+		echo '{"status":"error","message":"failed to fetch captcha"}'
+		return 1
+	fi
+}
+
 # 程序入口
 if [ "$1" = "--login" ]; then
 	xlnetacc_login_once
 	exit $?
 elif [ "$1" = "--logout" ]; then
 	xlnetacc_logout_once
+	exit $?
+elif [ "$1" = "--captcha" ]; then
+	xlnetacc_captcha_once
 	exit $?
 else
 	xlnetacc_init "$@" && xlnetacc_main

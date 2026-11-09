@@ -18,6 +18,7 @@ function index()
 	entry({"admin", "services", "xlnetacc", "logdata"}, call("action_log"))
 	entry({"admin", "services", "xlnetacc", "login"}, call("action_login"))
 	entry({"admin", "services", "xlnetacc", "logout"}, call("action_logout"))
+	entry({"admin", "services", "xlnetacc", "refreshcaptcha"}, call("action_refresh_captcha"))
 	entry({"admin", "services", "xlnetacc", "captcha"}, call("action_captcha"))
 end
 
@@ -46,6 +47,18 @@ function action_captcha()
 	luci.http.prepare_content("image/png")
 	luci.http.header("Cache-Control", "no-store, no-cache, must-revalidate")
 	luci.http.write(data)
+end
+
+-- 重新向迅雷获取一张验证码图片
+function action_refresh_captcha()
+	local util = require "luci.util"
+	local out = util.exec("/usr/bin/xlnetacc.sh --captcha 2>/dev/null") or ""
+	luci.http.prepare_content("application/json")
+	if out:find('"status":"ok"', 1, true) then
+		luci.http.write_json({ status = "ok" })
+	else
+		luci.http.write_json({ status = "error" })
+	end
 end
 
 -- 手动登录：账号密码 + 可选验证码，调用 xlnetacc.sh --login

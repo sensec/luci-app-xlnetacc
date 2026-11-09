@@ -66,6 +66,7 @@ o.rawhtml = true
 o.value = function(self, section)
 	local login_url = luci.dispatcher.build_url("admin", "services", "xlnetacc", "login")
 	local logout_url = luci.dispatcher.build_url("admin", "services", "xlnetacc", "logout")
+	local refresh_url = luci.dispatcher.build_url("admin", "services", "xlnetacc", "refreshcaptcha")
 	local captcha_url = luci.dispatcher.build_url("admin", "services", "xlnetacc", "captcha")
 	return string.format([==[
 	<div id="xlnetacc_captcha_box" style="display:none;">
@@ -85,6 +86,7 @@ o.value = function(self, section)
 	var loginUrl = '%s';
 	var captchaUrl = '%s';
 	var logoutUrl = '%s';
+	var refreshUrl = '%s';
 	var btn = document.getElementById('xlnetacc_login_btn');
 	var logoutBtn = document.getElementById('xlnetacc_logout_btn');
 	var box = document.getElementById('xlnetacc_captcha_box');
@@ -103,12 +105,21 @@ o.value = function(self, section)
 		msg.innerHTML = text || '';
 		msg.style.color = color || '';
 	}
-	function refreshCaptcha() {
+	function loadCaptcha() {
 		img.src = captchaUrl + '?t=' + (new Date().getTime());
+	}
+	function refreshCaptcha() {
+		var xhr = new XMLHttpRequest();
+		xhr.open('POST', refreshUrl, true);
+		xhr.onreadystatechange = function() {
+			if (xhr.readyState !== 4) return;
+			loadCaptcha();
+		};
+		xhr.send('');
 	}
 	function showCaptcha() {
 		box.style.display = '';
-		refreshCaptcha();
+		loadCaptcha();
 		code.value = '';
 		code.focus();
 	}
@@ -185,7 +196,7 @@ o.value = function(self, section)
 	};
 })();
 //]]></script>
-]==], login_url, captcha_url, logout_url)
+]==], login_url, captcha_url, logout_url, refresh_url)
 end
 
 return m
