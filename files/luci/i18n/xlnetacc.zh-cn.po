@@ -105,3 +105,9 @@ msgstr "无日志数据。"
 
 msgid "Error get log data."
 msgstr "获取日志数据失败。"
+
+msgid "Request timeout"
+msgstr "请求超时"
+
+msgid "seconds"
+msgstr "秒"

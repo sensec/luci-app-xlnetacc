@@ -2,4 +2,5 @@
 config general 'general'
 	option enabled '0'
 	option network 'wan'
+	option timeout '20'
 
