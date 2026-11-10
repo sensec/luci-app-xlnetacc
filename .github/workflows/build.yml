@@ -55,7 +55,7 @@ jobs:
       - name: Build package
         run: |
           mkdir -p sdk/package/luci-app-xlnetacc
-          rsync -a --exclude '/.git' --exclude '/bin' --exclude '/dist' ./ sdk/package/luci-app-xlnetacc/
+          rsync -a --exclude '/.git' --exclude '/bin' --exclude '/dist' --exclude '/sdk' ./ sdk/package/luci-app-xlnetacc/
           cd sdk
           [ -f feeds.conf ] || cp feeds.conf.default feeds.conf
           ./scripts/feeds update -a

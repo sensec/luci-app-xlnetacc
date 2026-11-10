@@ -643,7 +643,7 @@ xlnetacc_init() {
 	readonly up_state_file=/var/state/${NAME}_up_state
 	readonly login_state_file=/var/state/${NAME}_login_state
 	readonly vip_state_file=/var/state/${NAME}_vip_state
-	readonly session_file=/var/run/${NAME}_session
+	readonly session_file=/etc/${NAME}_session
 	down_acc=$(uci_get_by_bool "general" "down_acc" 0)
 	up_acc=$(uci_get_by_bool "general" "up_acc" 0)
 	readonly logging=$(uci_get_by_bool "general" "logging" 1)
@@ -771,7 +771,7 @@ xlnetacc_login_once() {
 	readonly up_state_file=/dev/null
 	readonly login_state_file=/var/state/${NAME}_login_state
 	readonly vip_state_file=/var/state/${NAME}_vip_state
-	readonly session_file=/var/run/${NAME}_session
+	readonly session_file=/etc/${NAME}_session
 	down_acc=1
 	up_acc=0
 	logging=1
@@ -821,7 +821,7 @@ xlnetacc_logout_once() {
 	readonly up_state_file=/dev/null
 	readonly login_state_file=/var/state/${NAME}_login_state
 	readonly vip_state_file=/var/state/${NAME}_vip_state
-	readonly session_file=/var/run/${NAME}_session
+	readonly session_file=/etc/${NAME}_session
 	down_acc=1
 	up_acc=0
 	logging=1
@@ -868,7 +868,7 @@ xlnetacc_captcha_once() {
 	readonly up_state_file=/dev/null
 	readonly login_state_file=/var/state/${NAME}_login_state
 	readonly vip_state_file=/var/state/${NAME}_vip_state
-	readonly session_file=/var/run/${NAME}_session
+	readonly session_file=/etc/${NAME}_session
 	down_acc=0
 	up_acc=0
 	logging=1

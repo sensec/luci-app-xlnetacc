@@ -17,7 +17,7 @@
 ## 依赖
 
 - `jshn`
-- `wget`（需提供 `wget-ssl`）
+- `wget-ssl`
 - `openssl-util`
 
 ## 安装
@@ -54,7 +54,7 @@ make package/luci-app-xlnetacc/compile V=s
 2. 点击「登录」：
    - 正常情况直接提示登录成功，并自动勾选「启用」、启动服务；
    - 如果迅雷要求验证码，图片和输入框会出现，输入后再次点击「登录」。
-3. 登录成功后会话会保存到 `/var/run/xlnetacc_session`，之后重启服务、重启路由器或 WAN 重连会自动复用，不再要求验证码。
+3. 登录成功后会话会保存到 `/etc/xlnetacc_session`，之后重启服务、重启路由器或 WAN 重连会自动复用，不再要求验证码。
 4. 点击验证码图片可以重新获取一张验证码。
 5. 点击「注销」会停止服务、注销账号并撤销运营商提速，同时取消勾选「启用」。
 
@@ -72,13 +72,13 @@ make package/luci-app-xlnetacc/compile V=s
 ## 安全提示
 
 - 账号密码以明文保存在 `/etc/config/xlnetacc`，建议执行 `chmod 600 /etc/config/xlnetacc`。
-- 会话文件 `/var/run/xlnetacc_session` 权限为 600，仅 root 可读。
+- 会话文件 `/etc/xlnetacc_session` 权限为 600，仅 root 可读。
 
 ## 常见问题
 
 - **运营商服务器未响应**：通常是请求超时太短。提速接口实际可能需要 10 秒以上，默认已调整为 20 秒。
 - **一直提示需要图形验证码**：迅雷账号触发了风控。使用页面上的「登录」按钮完成一次验证码登录即可，之后会话会被持久化复用。
-- **重启后需要重新登录**：确认会话文件 `/var/run/xlnetacc_session` 是否存在；若不存在，完成一次手动登录后即可持久化。
+- **重启后需要重新登录**：确认会话文件 `/etc/xlnetacc_session` 是否存在；若不存在，完成一次手动登录后即可持久化。
 
 ## 许可证
 
