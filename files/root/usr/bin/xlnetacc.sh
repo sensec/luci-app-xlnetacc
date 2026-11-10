@@ -701,6 +701,9 @@ xlnetacc_main() {
 		if [ -f "$session_file" ]; then
 			. "$session_file"
 			resumed=1
+			# 重置提速状态，避免沿用上一轮的“已提速(2)”而跳过 isp_upgrade
+			down_acc=$(uci_get_by_bool "general" "down_acc" 0)
+			up_acc=$(uci_get_by_bool "general" "up_acc" 0)
 			printf '1' > "$login_state_file"
 			_log "复用手动登录会话，继续后续提速流程" $(( 1 | 4 ))
 		fi
