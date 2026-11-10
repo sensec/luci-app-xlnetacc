@@ -5,9 +5,14 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Existing tag to build and release (leave empty for build only)'
+        required: false
+        type: string
 
 concurrency:
-  group: build-${{ github.ref }}
+  group: build-${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -32,6 +37,8 @@ jobs:
             ext: ipk
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
 
       - name: Install build dependencies
         run: |
@@ -84,7 +91,7 @@ jobs:
     needs: build
     permissions:
       contents: write
-    if: always() && startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/download-artifact@v4
@@ -100,6 +107,7 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
           files: release/*
           fail_on_unmatched_files: false
           generate_release_notes: true
