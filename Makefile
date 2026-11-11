@@ -23,8 +23,7 @@ define Package/$(PKG_NAME)/description
 endef
 
 define Build/Prepare
-	$(foreach po,$(wildcard ${CURDIR}/files/luci/i18n/*.po), \
-		po2lmo $(po) $(PKG_BUILD_DIR)/$(patsubst %.po,%.lmo,$(notdir $(po)));)
+	mkdir -p $(PKG_BUILD_DIR)
 endef
 
 define Build/Configure
@@ -41,21 +40,15 @@ fi
 exit 0
 endef
 
-define Package/$(PKG_NAME)/conffiles
-	/etc/config/xlnetacc
-endef
-
 define Package/$(PKG_NAME)/install
-	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/i18n
-	$(INSTALL_DATA) $(PKG_BUILD_DIR)/xlnetacc.*.lmo $(1)/usr/lib/lua/luci/i18n/
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller
 	$(INSTALL_DATA) ./files/luci/controller/*.lua $(1)/usr/lib/lua/luci/controller/
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/model/cbi
 	$(INSTALL_DATA) ./files/luci/model/cbi/*.lua $(1)/usr/lib/lua/luci/model/cbi/
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/view/xlnetacc
 	$(INSTALL_DATA) ./files/luci/view/xlnetacc/*.htm $(1)/usr/lib/lua/luci/view/xlnetacc/
-	$(INSTALL_DIR) $(1)/etc/config
-	$(INSTALL_CONF) ./files/root/etc/config/xlnetacc $(1)/etc/config/xlnetacc
+	$(INSTALL_DIR) $(1)/usr/share/luci-app-xlnetacc
+	$(INSTALL_DATA) ./files/root/etc/config/xlnetacc $(1)/usr/share/luci-app-xlnetacc/xlnetacc.default
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/root/etc/init.d/xlnetacc $(1)/etc/init.d/xlnetacc
 	$(INSTALL_DIR) $(1)/etc/hotplug.d/iface
