@@ -32,6 +32,12 @@ endef
 define Build/Compile
 endef
 
+define Package/$(PKG_NAME)/preinst
+#!/bin/sh
+[ -z "$${IPKG_INSTROOT}" ] && [ -f /etc/config/xlnetacc ] && cp /etc/config/xlnetacc /tmp/xlnetacc.config.keep
+exit 0
+endef
+
 define Package/$(PKG_NAME)/postinst
 #!/bin/sh
 if [ -z "$${IPKG_INSTROOT}" ]; then

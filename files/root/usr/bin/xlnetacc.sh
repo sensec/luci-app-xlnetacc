@@ -756,7 +756,12 @@ xlnetacc_main() {
 		while : ; do
 			clean_log # 清理日志
 			sleep ${keepalive}m
-			[ $relogin -ne 0 -a $(( $(date +%s) - $timer )) -ge $relogin ] && break # 登录超时
+			# 到达帐号重新登录时间：删除会话文件，下一轮走注销+登录
+			if [ $relogin -ne 0 -a $(( $(date +%s) - $timer )) -ge $relogin ]; then
+				_log "已达到帐号重新登录时间，删除会话并重新登录" $(( 1 | 4 ))
+				rm -f "$session_file"
+				break
+			fi
 			xlnetacc_retry 'isp_keepalive' 1 2 5 || break
 			xlnetacc_retry 'isp_keepalive' 2 2 5 || break
 		done
