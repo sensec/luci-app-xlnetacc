@@ -1,5 +1,14 @@
 #!/bin/sh
 
+# 首次从旧版本升级时，preinst 会把旧配置备份到 /tmp
+if [ -f /tmp/xlnetacc.config.keep ]; then
+	mv /tmp/xlnetacc.config.keep /etc/config/xlnetacc
+	chmod 600 /etc/config/xlnetacc
+elif [ ! -f /etc/config/xlnetacc ]; then
+	cp /usr/share/luci-app-xlnetacc/xlnetacc.default /etc/config/xlnetacc
+	chmod 600 /etc/config/xlnetacc
+fi
+
 uci -q batch <<-EOF >/dev/null
 	delete ucitrack.@xlnetacc[-1]
 	add ucitrack xlnetacc

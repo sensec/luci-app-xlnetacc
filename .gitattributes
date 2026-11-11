@@ -1,2 +1,9 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# OpenWrt build files must use LF
+Makefile text eol=lf
+*.sh text eol=lf
+*.lua text eol=lf
+*.htm text eol=lf
+files/root/etc/config/xlnetacc text eol=lf

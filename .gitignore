@@ -1,0 +1,5 @@
+/dist/
+/bin/
+*.ipk
+*.apk
+*.tar.zst

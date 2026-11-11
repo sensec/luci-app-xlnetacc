@@ -105,15 +105,34 @@ get_bind_ip() {
 
 # 定义基本 HTTP 命令和参数
 gen_http_cmd() {
-	_http_cmd="wget-ssl -nv -t 1 -T 5 -O - --no-check-certificate"
+	_http_cmd="wget-ssl -nv -t 1 -T ${timeout:-20} -O - --no-check-certificate"
 	_http_cmd="$_http_cmd --bind-address=$_bind_ip"
+}
+
+# 获取图形验证码图片（仅供手动登录使用，后台自动重登不触发）
+xlnetacc_fetch_captcha() {
+	local hdr=/tmp/xlnetacc_captcha.hdr key
+	_log "需要图形验证码，正在获取验证码图片..."
+	wget-ssl -S -q -t 1 -T "${timeout:-20}" -O /tmp/xlnetacc_captcha.png \
+		--bind-address="$_bind_ip" --no-check-certificate \
+		'https://verify.xunlei.com/image?t=MEA' 2> "$hdr"
+	if [ ! -s /tmp/xlnetacc_captcha.png ]; then
+		_log "获取验证码图片失败"
+		return 1
+	fi
+	key=$(grep -i 'VERIFY_KEY' "$hdr" | sed 's/.*VERIFY_KEY=//; s/;.*//')
+	[ -z "$key" ] && { _log "解析验证码 KEY 失败"; return 1; }
+	printf '%s\n' "$key" > /tmp/xlnetacc_captcha.key
+	_log "验证码图片已保存，请查看图片后输入验证码"
+	return 0
 }
 
 # 生成设备标识
 gen_device_sign() {
 	local ifname macaddr
 	while : ; do
-		ifname=$(uci get "network.$network.ifname" 2> /dev/null)
+		ifname=$(uci get "network.$network.device" 2> /dev/null)
+		[ -z "$ifname" ] && ifname=$(uci get "network.$network.ifname" 2> /dev/null)
 		[ "${ifname:0:1}" == "@" ] && network="${ifname:1}" || break
 	done
 	[ -z "$ifname" ] && { _log "获取网络 $network 信息出错"; return; }
@@ -165,8 +184,13 @@ swjsq_login() {
 		access_url='https://mobile-login.xunlei.com/login'
 		json_add_string userName "$username"
 		json_add_string passWord "$password"
-		json_add_string verifyKey
-		json_add_string verifyCode
+		local vkey vcode
+		if [ "$manual_login" = "1" ] && [ -f /tmp/xlnetacc_captcha.key ]; then
+			vkey=$(sed -n '1p' /tmp/xlnetacc_captcha.key)
+			vcode=$(sed -n '2p' /tmp/xlnetacc_captcha.key)
+		fi
+		json_add_string verifyKey "$vkey"
+		json_add_string verifyCode "$vcode"
 		json_add_string isMd5Pwd '0'
 	else
 		access_url='https://mobile-login.xunlei.com/loginkey'
@@ -193,6 +217,10 @@ swjsq_login() {
 			json_get_var _loginkey "loginKey"
 			json_get_var _sessionid "sessionID"
 			_log "_sessionid is $_sessionid" $(( 1 | 4 ))
+			printf '1' > "$login_state_file"
+			printf "_userid='%s'\n_loginkey='%s'\n_sessionid='%s'\n" \
+				"$_userid" "$_loginkey" "$_sessionid" > "$session_file"
+			chmod 600 "$session_file" 2>/dev/null
 			local outmsg="帐号登录成功"; _log "$outmsg" $(( 1 | 8 ))
 			;;
 		15) # 身份信息已失效
@@ -227,6 +255,7 @@ swjsq_logout() {
 	case ${lasterr:=-1} in
 		0)
 			_sessionid=
+			printf '0' > "$login_state_file"
 			local outmsg="帐号注销成功"; _log "$outmsg" $(( 1 | 8 ));;
 		-1)
 			local outmsg="帐号注销失败。迅雷服务器未响应，请稍候"; _log "$outmsg";;
@@ -257,6 +286,7 @@ swjsq_getuserinfo() {
 	case ${lasterr:=-1} in
 		0)
 			local index=1 can_down=0 vasid isVip isYear expireDate
+			printf '' > "$vip_state_file"
 			json_select "vipList" >/dev/null 2>&1
 			while : ; do
 				json_select $index >/dev/null 2>&1
@@ -273,15 +303,19 @@ swjsq_getuserinfo() {
 					$vasid_up) outmsg="上行提速会员";;
 					*) continue;;
 				esac
+				local vipname="$outmsg" expire_fmt="${expireDate:0:4}-${expireDate:4:2}-${expireDate:6:2}"
 				if [ ${isVip:-0} -eq 1 -o ${isYear:-0} -eq 1 ]; then
-					outmsg="${outmsg}有效。会员到期时间：${expireDate:0:4}-${expireDate:4:2}-${expireDate:6:2}"
+					outmsg="${outmsg}有效。会员到期时间：${expire_fmt}"
+					[ $vasid -ne $vasid_up ] && printf '%s %s\n' "$vipname" "$expire_fmt" >> "$vip_state_file"
 					[ $vasid -eq $vasid_up ] && _log "$outmsg" $(( 1 | 16 )) || _log "$outmsg" $(( 1 | 8 ))
 					[ $vasid -ne $vasid_up ] && can_down=$(( $can_down | 1 ))
 				else
 					if [ ${#expireDate} -ge 8 ]; then
-						outmsg="${outmsg}已到期。会员到期时间：${expireDate:0:4}-${expireDate:4:2}-${expireDate:6:2}"
+						outmsg="${outmsg}已到期。会员到期时间：${expire_fmt}"
+						[ $vasid -ne $vasid_up ] && printf '%s %s\n' "$vipname" "$expire_fmt" >> "$vip_state_file"
 					else
 						outmsg="${outmsg}无效"
+						[ $vasid -ne $vasid_up ] && printf '%s\n' "$vipname" >> "$vip_state_file"
 					fi
 					[ $vasid -eq $vasid_up ] && _log "$outmsg" $(( 1 | 16 | 32 )) || _log "$outmsg" $(( 1 | 8 | 32 ))
 					[ $vasid -eq $vasid_up ] && up_acc=0
@@ -588,7 +622,6 @@ xlnetacc_logout() {
 # 中止信号处理
 sigterm() {
 	_log "trap sigterm, exit" $(( 1 | 4 ))
-	xlnetacc_logout
 	rm -f "$down_state_file" "$up_state_file"
 	exit 0
 }
@@ -608,6 +641,9 @@ xlnetacc_init() {
 	readonly LOGFILE=/var/log/${NAME}.log
 	readonly down_state_file=/var/state/${NAME}_down_state
 	readonly up_state_file=/var/state/${NAME}_up_state
+	readonly login_state_file=/var/state/${NAME}_login_state
+	readonly vip_state_file=/var/state/${NAME}_vip_state
+	readonly session_file=/etc/${NAME}_session
 	down_acc=$(uci_get_by_bool "general" "down_acc" 0)
 	up_acc=$(uci_get_by_bool "general" "up_acc" 0)
 	readonly logging=$(uci_get_by_bool "general" "logging" 1)
@@ -615,6 +651,10 @@ xlnetacc_init() {
 	network=$(uci_get_by_name "general" "network" "wan")
 	keepalive=$(uci_get_by_name "general" "keepalive" 10)
 	relogin=$(uci_get_by_name "general" "relogin" 0)
+	timeout=$(uci_get_by_name "general" "timeout" 20)
+	([ -z "$timeout" -o -n "${timeout//[0-9]/}" ] || [ $timeout -lt 5 -o $timeout -gt 120 ]) && timeout=20
+	readonly timeout=$(( $timeout ))
+	_log "HTTP 请求超时: ${timeout} 秒" $(( 1 | 4 ))
 	readonly username=$(uci_get_by_name "general" "account")
 	readonly password=$(uci_get_by_name "general" "password")
 	local enabled=$(uci_get_by_bool "general" "enabled" 0)
@@ -645,6 +685,7 @@ xlnetacc_init() {
 	clean_log
 	[ -d /var/state ] || mkdir -p /var/state
 	rm -f "$down_state_file" "$up_state_file"
+	printf '0' > "$login_state_file"
 	return 0
 }
 
@@ -655,7 +696,19 @@ xlnetacc_main() {
 		xlnetacc_retry 'get_bind_ip'
 		gen_http_cmd
 
-		# 注销快鸟帐号
+		# 优先复用手动登录交来的会话，跳过注销/登录
+		local resumed=0
+		if [ -f "$session_file" ]; then
+			. "$session_file"
+			resumed=1
+			# 重置提速状态，避免沿用上一轮的“已提速(2)”而跳过 isp_upgrade
+			down_acc=$(uci_get_by_bool "general" "down_acc" 0)
+			up_acc=$(uci_get_by_bool "general" "up_acc" 0)
+			printf '1' > "$login_state_file"
+			_log "复用手动登录会话，继续后续提速流程" $(( 1 | 4 ))
+		fi
+
+		if [ $resumed -eq 0 ]; then
 		xlnetacc_logout 3 && sleep 3s
 
 		# 登录快鸟帐号
@@ -673,9 +726,17 @@ xlnetacc_main() {
 				*) return 5;; # 登录失败
 			esac
 		done
+		fi
 
-		# 获取用户信息
-		xlnetacc_retry 'swjsq_getuserinfo'
+		# 获取用户信息；会话失效时清除并重新登录
+		if ! xlnetacc_retry 'swjsq_getuserinfo' 0 0 3; then
+			_log "会话已失效，清除并重新登录" $(( 1 | 4 ))
+			rm -f "$session_file"
+			_userid=; _loginkey=; _sessionid=
+			printf '0' > "$login_state_file"
+			sleep 3s
+			continue
+		fi
 		[ $down_acc -eq 0 -a $up_acc -eq 0 ] && break
 		# 登录时间更新
 		xlnetacc_retry 'swjsq_renewal'
@@ -695,7 +756,12 @@ xlnetacc_main() {
 		while : ; do
 			clean_log # 清理日志
 			sleep ${keepalive}m
-			[ $relogin -ne 0 -a $(( $(date +%s) - $timer )) -ge $relogin ] && break # 登录超时
+			# 到达帐号重新登录时间：删除会话文件，下一轮走注销+登录
+			if [ $relogin -ne 0 -a $(( $(date +%s) - $timer )) -ge $relogin ]; then
+				_log "已达到帐号重新登录时间，删除会话并重新登录" $(( 1 | 4 ))
+				rm -f "$session_file"
+				break
+			fi
 			xlnetacc_retry 'isp_keepalive' 1 2 5 || break
 			xlnetacc_retry 'isp_keepalive' 2 2 5 || break
 		done
@@ -705,6 +771,144 @@ xlnetacc_main() {
 	return 6
 }
 
+# 手动登录（供 LuCI 登录按钮调用，允许人工输入验证码）
+xlnetacc_login_once() {
+	readonly NAME=xlnetacc
+	readonly LOGFILE=/var/log/${NAME}.log
+	readonly down_state_file=/dev/null
+	readonly up_state_file=/dev/null
+	readonly login_state_file=/var/state/${NAME}_login_state
+	readonly vip_state_file=/var/state/${NAME}_vip_state
+	readonly session_file=/etc/${NAME}_session
+	down_acc=1
+	up_acc=0
+	logging=1
+	verbose=0
+	manual_login=1
+	network=$(uci_get_by_name "general" "network" "wan")
+	username=$(uci_get_by_name "general" "account")
+	password=$(uci_get_by_name "general" "password")
+	timeout=$(uci_get_by_name "general" "timeout" 20)
+	([ -z "$timeout" -o -n "${timeout//[0-9]/}" ] || [ $timeout -lt 5 -o $timeout -gt 120 ]) && timeout=20
+
+	[ -z "$username" -o -z "$password" ] && { echo '{"status":"error","message":"account or password is empty"}'; return 1; }
+	command -v wget-ssl >/dev/null || { echo '{"status":"error","message":"wget-ssl is not installed"}'; return 1; }
+	[ -d /var/log ] || mkdir -p /var/log
+	[ -d /var/state ] || mkdir -p /var/state
+	printf '0' > "$login_state_file"
+
+	get_bind_ip >/dev/null 2>&1 || { echo '{"status":"error","message":"cannot get wan ip"}'; return 1; }
+	gen_http_cmd
+	gen_device_sign >/dev/null 2>&1
+	[ ${#_peerid} -ne 16 -o ${#_devicesign} -ne 71 ] && { echo '{"status":"error","message":"cannot generate device sign"}'; return 1; }
+
+	swjsq_login >/dev/null 2>&1
+	case ${lasterr:-0} in
+		0)
+			swjsq_getuserinfo >/dev/null 2>&1
+			echo '{"status":"ok"}'
+			return 0;;
+		6)
+			if xlnetacc_fetch_captcha >/dev/null 2>&1; then
+				echo '{"status":"captcha"}'
+			else
+				echo '{"status":"error","message":"failed to fetch captcha"}'
+			fi
+			return 0;;
+		*)
+			echo "{\"status\":\"error\",\"code\":\"${lasterr:-unknown}\"}"
+			return 1;;
+	esac
+}
+
+# 主动注销（供 LuCI 注销按钮调用）
+xlnetacc_logout_once() {
+	readonly NAME=xlnetacc
+	readonly LOGFILE=/var/log/${NAME}.log
+	readonly down_state_file=/dev/null
+	readonly up_state_file=/dev/null
+	readonly login_state_file=/var/state/${NAME}_login_state
+	readonly vip_state_file=/var/state/${NAME}_vip_state
+	readonly session_file=/etc/${NAME}_session
+	down_acc=1
+	up_acc=0
+	logging=1
+	verbose=0
+	manual_login=1
+	network=$(uci_get_by_name "general" "network" "wan")
+	timeout=$(uci_get_by_name "general" "timeout" 20)
+	([ -z "$timeout" -o -n "${timeout//[0-9]/}" ] || [ $timeout -lt 5 -o $timeout -gt 120 ]) && timeout=20
+
+	[ -d /var/log ] || mkdir -p /var/log
+
+	if [ -f "$session_file" ]; then
+		. "$session_file"
+	fi
+
+	if [ -z "$_sessionid" ]; then
+		rm -f "$session_file"
+		printf '0' > "$login_state_file"
+		echo '{"status":"ok","message":"no active session"}'
+		return 0
+	fi
+
+	get_bind_ip >/dev/null 2>&1 || { echo '{"status":"error","message":"cannot get wan ip"}'; return 1; }
+	gen_http_cmd
+	gen_device_sign >/dev/null 2>&1
+	[ ${#_peerid} -ne 16 -o ${#_devicesign} -ne 71 ] && { echo '{"status":"error","message":"cannot generate device sign"}'; return 1; }
+
+	# 先取提速入口，才能撤销运营商侧提速
+	xlnetacc_retry 'swjsq_portal' 1 1 1 >/dev/null 2>&1
+	down_acc=2
+	xlnetacc_logout 1 >/dev/null 2>&1
+
+	rm -f "$session_file"
+	printf '0' > "$login_state_file"
+	echo '{"status":"ok"}'
+	return 0
+}
+
+# 获取一张新的验证码图片（供页面点击图片刷新）
+xlnetacc_captcha_once() {
+	readonly NAME=xlnetacc
+	readonly LOGFILE=/var/log/${NAME}.log
+	readonly down_state_file=/dev/null
+	readonly up_state_file=/dev/null
+	readonly login_state_file=/var/state/${NAME}_login_state
+	readonly vip_state_file=/var/state/${NAME}_vip_state
+	readonly session_file=/etc/${NAME}_session
+	down_acc=0
+	up_acc=0
+	logging=1
+	verbose=0
+	network=$(uci_get_by_name "general" "network" "wan")
+	timeout=$(uci_get_by_name "general" "timeout" 20)
+	([ -z "$timeout" -o -n "${timeout//[0-9]/}" ] || [ $timeout -lt 5 -o $timeout -gt 120 ]) && timeout=20
+
+	[ -d /var/log ] || mkdir -p /var/log
+	get_bind_ip >/dev/null 2>&1 || { echo '{"status":"error","message":"cannot get wan ip"}'; return 1; }
+	gen_http_cmd
+
+	if xlnetacc_fetch_captcha >/dev/null 2>&1; then
+		echo '{"status":"ok"}'
+		return 0
+	else
+		echo '{"status":"error","message":"failed to fetch captcha"}'
+		return 1
+	fi
+}
+
 # 程序入口
-xlnetacc_init "$@" && xlnetacc_main
-exit $?
+if [ "$1" = "--login" ]; then
+	xlnetacc_login_once
+	exit $?
+elif [ "$1" = "--logout" ]; then
+	xlnetacc_logout_once
+	exit $?
+elif [ "$1" = "--captcha" ]; then
+	xlnetacc_captcha_once
+	exit $?
+else
+	xlnetacc_init "$@" && xlnetacc_main
+	exit $?
+fi

@@ -1,0 +1,113 @@
+name: Build packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Existing tag to build and release (leave empty for build only)'
+        required: false
+        type: string
+
+concurrency:
+  group: build-${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: openwrt-21.02-ipk
+            sdk: https://downloads.openwrt.org/releases/21.02.7/targets/x86/64/openwrt-sdk-21.02.7-x86-64_gcc-8.4.0_musl.Linux-x86_64.tar.xz
+            ext: ipk
+          - name: openwrt-22.03-ipk
+            sdk: https://downloads.openwrt.org/releases/22.03.7/targets/x86/64/openwrt-sdk-22.03.7-x86-64_gcc-11.2.0_musl.Linux-x86_64.tar.xz
+            ext: ipk
+          - name: openwrt-23.05-ipk
+            sdk: https://downloads.openwrt.org/releases/23.05.5/targets/x86/64/openwrt-sdk-23.05.5-x86-64_gcc-12.3.0_musl.Linux-x86_64.tar.xz
+            ext: ipk
+          - name: openwrt-24.10-ipk
+            sdk: https://downloads.openwrt.org/releases/24.10.0/targets/x86/64/openwrt-sdk-24.10.0-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+            ext: ipk
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential zstd rsync file wget bzip2
+
+      - name: Build po2lmo
+        run: |
+          make -C tools/po2lmo CC=gcc
+          sudo install -m 755 tools/po2lmo/src/po2lmo /usr/local/bin/po2lmo
+
+      - name: Download SDK
+        run: |
+          curl -fsSL -o sdk.tar "${{ matrix.sdk }}"
+          mkdir sdk
+          case "${{ matrix.sdk }}" in
+            *.zst) tar --zstd -xf sdk.tar -C sdk --strip-components=1 ;;
+            *) tar -xf sdk.tar -C sdk --strip-components=1 ;;
+          esac
+
+      - name: Build package
+        run: |
+          mkdir -p sdk/package/luci-app-xlnetacc
+          rsync -a --exclude '/.git' --exclude '/bin' --exclude '/dist' --exclude '/sdk' ./ sdk/package/luci-app-xlnetacc/
+          cd sdk
+          [ -f feeds.conf ] || cp feeds.conf.default feeds.conf
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          make defconfig
+          make package/luci-app-xlnetacc/compile V=s
+
+      - name: Collect packages
+        run: |
+          mkdir -p dist
+          find sdk/bin/packages -type f -name "luci-app-xlnetacc*.${{ matrix.ext }}" -exec cp {} dist/ \;
+          for f in dist/luci-app-xlnetacc*.${{ matrix.ext }}; do
+            [ -e "$f" ] || continue
+            mv "$f" "${f%.${{ matrix.ext }}}_${{ matrix.name }}.${{ matrix.ext }}"
+          done
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: dist/*.${{ matrix.ext }}
+          if-no-files-found: error
+
+  release:
+    name: Create release
+    needs: build
+    permissions:
+      contents: write
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          path: artifacts
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release
+          find artifacts -type f \( -name '*.ipk' -o -name '*.apk' \) -exec cp {} release/ \;
+          ls -la release
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          files: release/*
+          fail_on_unmatched_files: false
+          generate_release_notes: true

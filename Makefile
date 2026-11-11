@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-xlnetacc
-PKG_VERSION:=1.0.5
+PKG_VERSION:=1.0.6
 PKG_RELEASE:=1
 
 PKG_LICENSE:=GPLv2
@@ -15,7 +15,7 @@ define Package/$(PKG_NAME)
 	SUBMENU:=3. Applications
 	TITLE:=LuCI Support for XLNetAcc
 	PKGARCH:=all
-	DEPENDS:=+jshn +wget +openssl-util
+	DEPENDS:=+jshn +wget-ssl +openssl-util
 endef
 
 define Package/$(PKG_NAME)/description
@@ -23,14 +23,19 @@ define Package/$(PKG_NAME)/description
 endef
 
 define Build/Prepare
-	$(foreach po,$(wildcard ${CURDIR}/files/luci/i18n/*.po), \
-		po2lmo $(po) $(PKG_BUILD_DIR)/$(patsubst %.po,%.lmo,$(notdir $(po)));)
+	mkdir -p $(PKG_BUILD_DIR)
 endef
 
 define Build/Configure
 endef
 
 define Build/Compile
+endef
+
+define Package/$(PKG_NAME)/preinst
+#!/bin/sh
+[ -z "$${IPKG_INSTROOT}" ] && [ -f /etc/config/xlnetacc ] && cp /etc/config/xlnetacc /tmp/xlnetacc.config.keep
+exit 0
 endef
 
 define Package/$(PKG_NAME)/postinst
@@ -41,21 +46,15 @@ fi
 exit 0
 endef
 
-define Package/$(PKG_NAME)/conffiles
-	/etc/config/xlnetacc
-endef
-
 define Package/$(PKG_NAME)/install
-	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/i18n
-	$(INSTALL_DATA) $(PKG_BUILD_DIR)/xlnetacc.*.lmo $(1)/usr/lib/lua/luci/i18n/
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/controller
 	$(INSTALL_DATA) ./files/luci/controller/*.lua $(1)/usr/lib/lua/luci/controller/
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/model/cbi
 	$(INSTALL_DATA) ./files/luci/model/cbi/*.lua $(1)/usr/lib/lua/luci/model/cbi/
 	$(INSTALL_DIR) $(1)/usr/lib/lua/luci/view/xlnetacc
 	$(INSTALL_DATA) ./files/luci/view/xlnetacc/*.htm $(1)/usr/lib/lua/luci/view/xlnetacc/
-	$(INSTALL_DIR) $(1)/etc/config
-	$(INSTALL_CONF) ./files/root/etc/config/xlnetacc $(1)/etc/config/xlnetacc
+	$(INSTALL_DIR) $(1)/usr/share/luci-app-xlnetacc
+	$(INSTALL_DATA) ./files/root/etc/config/xlnetacc $(1)/usr/share/luci-app-xlnetacc/xlnetacc.default
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/root/etc/init.d/xlnetacc $(1)/etc/init.d/xlnetacc
 	$(INSTALL_DIR) $(1)/etc/hotplug.d/iface
